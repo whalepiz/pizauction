@@ -1,68 +1,40 @@
 "use client";
-import React, { useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
-import { encryptBidBytes, getAuctionContract, connectWallet } from "@/lib/fhe";
+import AuctionInfo from "@/components/AuctionInfo";
+import BidForm from "@/components/BidForm";
+import StatusPanel from "@/components/StatusPanel";
+import FaqPanel from "@/components/FaqPanel";
+import { connectWallet } from "@/lib/fhe";
 
-export default function Page(){
+export default function HomePage() {
   const [connected, setConnected] = useState(false);
-  const [amount, setAmount] = useState<string>("");
-  const [bidsCount, setBidsCount] = useState(0);
-  const [txStatus, setTxStatus] = useState<null | "pending" | "success" | "error">(null);
+  const fakeLogs = ["Auction started", "New bid submitted"];
 
-  async function handleConnect(){
-    try { await connectWallet(); setConnected(true); } catch {}
-  }
-
-  async function handlePlaceBid(e: React.FormEvent){
-    e.preventDefault();
-    setTxStatus("pending");
-    try {
-      const encBytes = await encryptBidBytes(amount || "0");
-      const contract = await getAuctionContract();
-      const tx = await contract.placeBid(encBytes);
-      await tx.wait();
-      setTxStatus("success");
-      setBidsCount((c)=>c+1);
-    } catch (e) { console.error(e); setTxStatus("error"); }
+  async function onConnect() {
+    try { await connectWallet(); setConnected(true); } catch (e) { console.error(e); }
   }
 
   return (
-    <div style={{minHeight:'100vh', background:'#0b1220', color:'#fff'}}>
-      <header style={{maxWidth:960, margin:'0 auto', padding:'24px'}}>
-        <h1 style={{margin:0}}>FHE Private Auction</h1>
-        <Button onClick={connected?()=>{}:handleConnect} className="mt-3">
-          {connected? "Wallet Connected":"Connect Wallet"}
-        </Button>
-      </header>
-      <main style={{maxWidth:960, margin:'0 auto', padding:'0 24px 48px'}}>
-        <Card className="bg-white/5 border-white/10">
-          <CardHeader><div className="text-xl font-semibold">Place a Private Bid</div></CardHeader>
-          <CardContent>
-            <form onSubmit={handlePlaceBid} className="grid gap-4">
-              <div>
-                <Label htmlFor="amount">Amount (ETH)</Label>
-                <Input id="amount" type="number" min="0" step="0.0001"
-                  value={amount} onChange={(e)=>setAmount(e.target.value)} />
-              </div>
-              <Button type="submit" disabled={!connected || !amount}>Submit Encrypted Bid</Button>
-            </form>
-            {txStatus === "pending" && <Alert className="mt-4"><AlertTitle>Submitting…</AlertTitle></Alert>}
-            {txStatus === "success" && <Alert className="mt-4 bg-emerald-500/10 border-emerald-500/40">
-              <AlertTitle>Bid received</AlertTitle>
-              <AlertDescription>Your encrypted bid is on-chain.</AlertDescription>
-            </Alert>}
-            {txStatus === "error" && <Alert className="mt-4 bg-rose-500/10 border-rose-500/40">
-              <AlertTitle>Error</AlertTitle>
-              <AlertDescription>Please retry or reconnect wallet.</AlertDescription>
-            </Alert>}
-          </CardContent>
-          <CardFooter className="text-sm text-white/60">Total bids submitted: {bidsCount}</CardFooter>
-        </Card>
-      </main>
-    </div>
+    <main className="min-h-screen bg-gradient-to-b from-gray-900 to-black text-white p-8">
+      <div className="max-w-5xl mx-auto space-y-6">
+        <header className="flex justify-between items-center">
+          <h1 className="text-3xl font-bold tracking-tight">⚡ FHE Private Auction</h1>
+          <div className="flex gap-3">
+            <Button variant="outline" asChild>
+              <a href="https://github.com/whalepiz/pizauction" target="_blank">Repo</a>
+            </Button>
+            <Button onClick={onConnect} className={connected ? "bg-emerald-500 hover:bg-emerald-400" : ""}>
+              {connected ? "Wallet Connected" : "Connect Wallet"}
+            </Button>
+          </div>
+        </header>
+
+        <AuctionInfo totalBids={12} timeLeft="3h 20m" phase="Bidding" />
+        <BidForm />
+        <StatusPanel logs={fakeLogs} />
+        <FaqPanel />
+      </div>
+    </main>
   );
 }
