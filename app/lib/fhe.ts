@@ -70,9 +70,12 @@ export async function fetchBidHistory(fromBlock?: number, toBlock?: number) {
   const provider = new JsonRpcProvider(RPC_URL);
 
   // Dùng Interface để tạo topic & parse log
-  const iface = new Interface(ABI);
-  // event BidSubmitted(address bidder, bytes encryptedAmount, uint256 timestamp)
-  const topic = iface.getEventTopic("BidSubmitted");
+// ✅ đúng cho ethers v6
+const iface = new Interface(ABI);
+// event BidSubmitted(address bidder, bytes encryptedAmount, uint256 timestamp)
+const evt = iface.getEvent("BidSubmitted");   // hoặc "BidSubmitted(address,bytes,uint256)"
+const topic = iface.getEventTopic(evt);
+
 
   const filter = {
     address: CONTRACT_ADDRESS,
