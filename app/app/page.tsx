@@ -1,34 +1,36 @@
-Tôi đang sửa đến phần này  
-5) app/page.tsx (thay phần “Marketplace grid” để dùng AuctionCard)
-đây là code cũ bạn thay cho tôi : 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { connectWallet } from "@/lib/fhe";
+import { connectWallet, fetchAuctionsFromChain, OnchainAuction } from "@/lib/fhe";
 import CreateAuctionForm from "@/components/CreateAuctionForm";
 import AuctionCard from "@/components/AuctionCard";
-import { getAuctions, Auction, seedIfEmpty } from "@/lib/auctionStore";
 
 export default function HomePage() {
   const [connected, setConnected] = useState(false);
-  const [auctions, setAuctions] = useState<Auction[]>([]);
+  const [auctions, setAuctions] = useState<OnchainAuction[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Nạp dữ liệu mẫu cho Marketplace lần đầu (nếu rỗng) + lắng nghe thay đổi
-  useEffect(() => {
-    // dùng Auction address mặc định nếu có (không bắt buộc)
-    seedIfEmpty(process.env.NEXT_PUBLIC_AUCTION_ADDRESS || "");
-    setAuctions(getAuctions());
-
-    // nếu tab khác tạo auction, tự refresh
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === "fhe.auctions.v1") setAuctions(getAuctions());
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true);
+      const list = await fetchAuctionsFromChain();
+      setAuctions(list);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const refresh = () => setAuctions(getAuctions());
+  useEffect(() => {
+    // nạp danh sách từ Factory on-chain
+    refresh();
+
+    // auto refresh mỗi 30s để cập nhật countdown/danh sách
+    const t = setInterval(refresh, 30_000);
+    return () => clearInterval(t);
+  }, [refresh]);
 
   async function onConnect() {
     try {
@@ -57,19 +59,24 @@ export default function HomePage() {
       {/* Body */}
       <div className="mx-auto max-w-6xl px-5 pb-20 space-y-10">
         {/* Create auction (deploy qua Factory từ FE) */}
-        <CreateAuctionForm onCreated={refresh} />
+        <section className="rounded-xl border border-white/10 bg-[#0b1220] p-4 md:p-6">
+          <CreateAuctionForm onCreated={refresh} />
+        </section>
 
         {/* Marketplace grid */}
         <section>
           <h2 className="text-xl font-semibold mb-3">Marketplace</h2>
-          {auctions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
+
+          {loading ? (
+            <p className="text-sm text-white/60">Loading auctions…</p>
+          ) : auctions.length === 0 ? (
+            <p className="text-sm text-white/60">
               No auctions yet. Create one above to get started.
             </p>
           ) : (
             <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               {auctions.map((a) => (
-                <AuctionCard key={a.id} auction={a} onBid={refresh} />
+                <AuctionCard key={a.address} a={a} />
               ))}
             </div>
           )}
