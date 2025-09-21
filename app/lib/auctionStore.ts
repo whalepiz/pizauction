@@ -1,12 +1,16 @@
 "use client";
 
-// Dùng crypto.randomUUID() thay cho 'uuid' để khỏi cài thêm package
+// Tạo ID không phụ thuộc package ngoài.
+// Ưu tiên dùng crypto.randomUUID() nếu có (browser/Node 18+), fallback nếu không có.
 function genId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    // @ts-expect-error runtime check
-    return crypto.randomUUID() as string;
+  const randomUUID = (globalThis as any)?.crypto?.randomUUID as
+    | undefined
+    | (() => string);
+
+  if (typeof randomUUID === "function") {
+    return randomUUID();
   }
-  // Fallback nếu môi trường không có crypto.randomUUID
+  // Fallback đơn giản, đủ dùng cho client demo
   return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
