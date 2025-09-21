@@ -1,4 +1,4 @@
-"use client";
+code cũ đây bạn tự thay cho mình sao chép : "use client";
 
 import {
   BrowserProvider,
