@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import Image from "next/image";
 import { createAuctionOnChain } from "@/lib/fhe";
 import { toast } from "sonner";
+
+const FALLBACK_IMG = "https://picsum.photos/seed/placeholder/800/800";
 
 export default function CreateAuctionForm({
   onCreated,
@@ -19,10 +21,17 @@ export default function CreateAuctionForm({
   const [hours, setHours] = useState<number>(6);
   const [loading, setLoading] = useState(false);
 
+  // preview helpers
+  const [imgOk, setImgOk] = useState(true);
+  const [imgLoading, setImgLoading] = useState(false);
+
   const canCreate = useMemo(
     () => title.trim().length > 0 && hours > 0,
     [title, hours]
   );
+  const previewTitle = title.trim() || "Untitled NFT";
+  const previewDesc = desc.trim() || "No description";
+  const previewImg = imgOk && img ? img : FALLBACK_IMG;
 
   async function submit() {
     if (!canCreate || loading) return;
@@ -40,6 +49,7 @@ export default function CreateAuctionForm({
             ),
         },
       });
+      // reset form
       setTitle("");
       setDesc("");
       setHours(6);
@@ -53,7 +63,8 @@ export default function CreateAuctionForm({
 
   return (
     <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5 shadow-lg">
-      <div className="grid gap-5 md:grid-cols-[1fr_320px]">
+      <div className="grid gap-5 md:grid-cols-[1fr_360px]">
+        {/* LEFT: form */}
         <div className="space-y-3">
           <Input
             placeholder="NFT title"
@@ -64,7 +75,11 @@ export default function CreateAuctionForm({
           <Input
             placeholder="Image URL (https://...)"
             value={img}
-            onChange={(e) => setImg(e.target.value)}
+            onChange={(e) => {
+              setImg(e.target.value);
+              setImgOk(true);
+              setImgLoading(true);
+            }}
             className="bg-black/30"
           />
           <Textarea
@@ -100,14 +115,50 @@ export default function CreateAuctionForm({
           </div>
         </div>
 
+        {/* RIGHT: live preview card */}
         <div className="relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-zinc-800 to-black">
-          {/* preview image */}
+          {/* Skeleton while loading */}
+          {imgLoading && (
+            <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-zinc-700/40 to-zinc-900/40" />
+          )}
+
           <Image
-            src={img || "https://picsum.photos/seed/placeholder/800/800"}
+            src={previewImg}
             alt="Preview"
             fill
             className="object-cover"
+            onLoadingComplete={() => setImgLoading(false)}
+            onError={() => {
+              setImgOk(false);
+              setImgLoading(false);
+            }}
           />
+
+          {/* gradient overlay for text readability */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-black/80 to-transparent" />
+
+          {/* top-right badge */}
+          <div className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white/80 backdrop-blur">
+            Preview
+          </div>
+
+          {/* bottom content */}
+          <div className="absolute inset-x-3 bottom-3 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-semibold">{previewTitle}</span>
+              <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] text-white/80">
+                {hours}h duration
+              </span>
+            </div>
+            <p className="line-clamp-2 text-xs text-white/70">{previewDesc}</p>
+          </div>
+
+          {/* fallback badge if image missing */}
+          {!imgOk && (
+            <div className="absolute left-2 top-2 rounded-md bg-rose-600/80 px-2 py-0.5 text-[10px]">
+              Image failed — showing placeholder
+            </div>
+          )}
         </div>
       </div>
     </section>

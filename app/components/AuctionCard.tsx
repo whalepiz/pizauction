@@ -1,116 +1,119 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { OnchainAuction, bidOnAuction, ensureWallet } from "@/lib/fhe";
-import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { encodeBid, bidOnAuction } from "@/lib/fhe";
 
-function useCountdown(end: number) {
-  const [t, setT] = useState(() => Math.max(0, end - Date.now()));
-  useEffect(() => {
-    const id = setInterval(() => setT(Math.max(0, end - Date.now())), 1000);
-    return () => clearInterval(id);
-  }, [end]);
-  const d = Math.floor(t / (24 * 3600_000));
-  const h = Math.floor((t % (24 * 3600_000)) / 3600_000);
-  const m = Math.floor((t % 3600_000) / 60_000);
-  const s = Math.floor((t % 60_000) / 1000);
-  return { d, h, m, s, finished: t <= 0 };
+type Props = {
+  auction: {
+    address: string;
+    item: string;
+    endTimeMs: number;
+    imageUrl?: string;
+    description?: string;
+  };
+  onBid?: () => void;
+};
+
+function shortAddr(a: string) {
+  return a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "";
 }
 
-export default function AuctionCard({
-  auction,
-  onBid,
-}: {
-  auction: OnchainAuction;
-  onBid?: () => void;
-}) {
-  const { d, h, m, s, finished } = useCountdown(auction.endTimeMs);
-  const [amount, setAmount] = useState("");
-  const endsIn = useMemo(() => {
-    if (finished) return "Closed";
-    const parts = [];
-    if (d) parts.push(`${d}d`);
-    parts.push(`${h}h`, `${m}m`, `${s}s`);
-    return parts.join(" ");
-  }, [d, h, m, s, finished]);
+function Countdown({ end }: { end: number }) {
+  const [now, setNow] = useState(Date.now());
+  useState(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  });
+  const diff = Math.max(0, end - now);
+  const s = Math.floor(diff / 1000);
+  const hh = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return <span>{hh}h {mm}m {ss}s</span>;
+}
 
-  async function handleBid() {
-    if (!amount) return;
+export default function AuctionCard({ auction, onBid }: Props) {
+  const [amt, setAmt] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const ended = useMemo(() => Date.now() >= auction.endTimeMs, [auction.endTimeMs]);
+  const img = auction.imageUrl || "/no-image.png";
+
+  async function submit() {
+    if (!amt || ended) return;
     try {
-      await ensureWallet();
-      const tx = await bidOnAuction(auction.address, amount);
-      toast.success("Bid submitted", {
-        description: (tx as any)?.hash ?? "On-chain transaction sent.",
-        action: {
-          label: "Etherscan",
-          onClick: () =>
-            window.open(
-              `https://sepolia.etherscan.io/tx/${(tx as any)?.hash ?? ""}`,
-              "_blank"
-            ),
-        },
-      });
-      setAmount("");
+      setBusy(true);
+      // dùng encodeBid() như placeholder mã hoá ở client
+      encodeBid(amt);
+      await bidOnAuction(auction.address, amt);
+      setAmt("");
       onBid?.();
-    } catch (e: any) {
-      toast.error(e?.shortMessage || e?.message || "Bid failed");
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
-    <div className="group rounded-2xl border border-white/10 bg-zinc-900/40 p-3 shadow-md transition-all hover:shadow-fuchsia-500/20 hover:border-fuchsia-400/30">
-      <div className="relative aspect-[4/3] overflow-hidden rounded-xl bg-gradient-to-br from-zinc-800 via-zinc-900 to-black">
-        {auction.imageUrl ? (
-          <Image
-            src={auction.imageUrl}
-            alt={auction.item}
-            fill
-            className="object-cover transition-transform duration-300 group-hover:scale-105"
-          />
-        ) : (
-          <div className="absolute inset-0 grid place-items-center text-white/40">
-            No Image
-          </div>
-        )}
+    <div
+      className={cn(
+        "group relative rounded-2xl bg-gradient-to-b from-[#16191f] to-[#0c0f14]",
+        "shadow-[0_20px_80px_-20px_rgba(0,0,0,0.45)] border border-white/10",
+        "hover:shadow-[0_30px_100px_-20px_rgba(0,0,0,0.6)] transition-all duration-300"
+      )}
+    >
+      {/* Media */}
+      <div className="relative aspect-[4/5] w-full overflow-hidden rounded-t-2xl">
+        <Image
+          src={img}
+          alt={auction.item || "NFT"}
+          fill
+          className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+          sizes="(max-width: 768px) 100vw, (max-width: 1400px) 33vw, 20vw"
+        />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+        <div className="absolute left-3 top-3 text-[11px] px-2 py-1 rounded-md bg-black/55 text-white/90 border border-white/10">
+          {shortAddr(auction.address)}
+        </div>
       </div>
 
-      <div className="mt-3 space-y-2">
+      {/* Body */}
+      <div className="p-4">
         <div className="flex items-center justify-between">
-          <h3 className="line-clamp-1 font-semibold tracking-tight">
-            {auction.item}
-          </h3>
-          <span
-            className={`rounded-md px-2 py-0.5 text-xs ${
-              finished
-                ? "bg-red-500/20 text-red-300"
-                : "bg-emerald-500/15 text-emerald-300"
-            }`}
-          >
-            {finished ? "Closed" : `Ends in ${endsIn}`}
-          </span>
+          <h3 className="font-semibold text-white/90 truncate pr-2">{auction.item || "Untitled"}</h3>
+          <div className="text-[11px] text-emerald-300/90 bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-400/20">
+            {ended ? "Ended" : <>Ends in <Countdown end={auction.endTimeMs} /></>}
+          </div>
         </div>
 
+        {auction.description ? (
+          <p className="mt-1 text-xs text-white/50 line-clamp-2">{auction.description}</p>
+        ) : null}
+
         {/* Bid inline */}
-        <div className="flex items-center gap-2">
+        <div className="mt-3 flex items-center gap-2">
           <Input
+            value={amt}
+            onChange={(e) => setAmt(e.target.value)}
             placeholder="Amount (ETH)"
             type="number"
-            step="0.0001"
             min="0"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className="bg-black/30"
-            disabled={finished}
+            step="0.0001"
+            disabled={busy || ended}
+            className="h-9 bg-white/5 border-white/10 text-white/90 placeholder:text-white/30"
           />
           <Button
-            onClick={handleBid}
-            disabled={!amount || finished}
-            className="bg-gradient-to-r from-fuchsia-600 to-cyan-500 hover:opacity-90"
+            size="sm"
+            disabled={!amt || busy || ended}
+            onClick={submit}
+            className="bg-gradient-to-r from-[#8a63ff] to-[#1ecad3] hover:opacity-95"
           >
-            Bid
+            {busy ? "Bidding…" : "Bid"}
           </Button>
         </div>
       </div>

@@ -1,10 +1,8 @@
 "use client";
 
-type Meta = { title?: string; imageUrl?: string; description?: string };
+const KEY = "fhe.images.v1"; // { [address]: url }
 
-const KEY = "fhe.market.meta.v1";
-
-function readAll(): Record<string, Meta> {
+function read(): Record<string, string> {
   if (typeof window === "undefined") return {};
   try {
     const raw = localStorage.getItem(KEY);
@@ -14,21 +12,22 @@ function readAll(): Record<string, Meta> {
   }
 }
 
-function writeAll(obj: Record<string, Meta>) {
+function write(map: Record<string, string>) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(KEY, JSON.stringify(obj));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(map));
+  } catch {}
 }
 
-export function saveAuctionMeta(
-  address: string,
-  meta: Meta
-) {
-  const all = readAll();
-  all[address.toLowerCase()] = { ...(all[address.toLowerCase()] || {}), ...meta };
-  writeAll(all);
+export function saveAuctionImage(address: string, url: string) {
+  if (!address || !url) return;
+  const map = read();
+  map[address.toLowerCase()] = url;
+  write(map);
 }
 
-export function getAuctionMeta(address: string): Meta | undefined {
-  const all = readAll();
-  return all[address.toLowerCase()];
+export function getAuctionImage(address: string): string | undefined {
+  if (!address) return;
+  const map = read();
+  return map[address.toLowerCase()];
 }

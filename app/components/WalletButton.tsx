@@ -1,105 +1,125 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ensureWallet } from "@/lib/fhe";
-import { Copy, LogOut } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CHAIN_ID } from "@/lib/fhe";
 
-function short(addr?: string | null) {
-  if (!addr) return "";
-  return addr.slice(0, 6) + "…" + addr.slice(-4);
+/** rút gọn địa chỉ ví */
+function short(addr: string) {
+  return addr.slice(0, 6) + "..." + addr.slice(-4);
+}
+
+/** chuyển số chainId sang hex để wallet_switchEthereumChain */
+function toHexChain(id: number) {
+  return "0x" + id.toString(16);
 }
 
 export default function WalletButton() {
-  const [address, setAddress] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [account, setAccount] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  async function connect() {
-    try {
-      const provider = await ensureWallet(); // cũng tự check chain
-      const accs = await (window as any).ethereum.request({
-        method: "eth_requestAccounts",
-      });
-      setAddress(accs?.[0] ?? null);
-      toast.success("Wallet connected");
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to connect wallet");
+  // đọc tài khoản hiện tại & lắng nghe thay đổi từ MetaMask
+  useEffect(() => {
+    const eth = (window as any).ethereum;
+    if (!eth) return;
+
+    // lấy sẵn nếu user đã connect từ trước
+    eth.request({ method: "eth_accounts" })
+      .then((accs: string[]) => {
+        if (accs && accs[0]) setAccount(accs[0]);
+      })
+      .catch(() => {});
+
+    // lắng nghe đổi tài khoản / chain
+    const onAccounts = (accs: string[]) => setAccount(accs[0] ?? null);
+    const onChain = async () => {
+      try {
+        const cid = await eth.request({ method: "eth_chainId" });
+        if (parseInt(cid, 16) !== CHAIN_ID) {
+          toast.warning(`Wrong network, please switch to chainId ${CHAIN_ID}`);
+        }
+      } catch {}
+    };
+    eth.on?.("accountsChanged", onAccounts);
+    eth.on?.("chainChanged", onChain);
+
+    return () => {
+      eth.removeListener?.("accountsChanged", onAccounts);
+      eth.removeListener?.("chainChanged", onChain);
+    };
+  }, []);
+
+  async function ensureChain() {
+    const eth = (window as any).ethereum;
+    if (!eth) throw new Error("No wallet found");
+    const chainIdHex = await eth.request({ method: "eth_chainId" });
+    const cur = parseInt(chainIdHex, 16);
+    if (cur !== CHAIN_ID) {
+      // thử switch chain
+      try {
+        await eth.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: toHexChain(CHAIN_ID) }],
+        });
+      } catch (err: any) {
+        // nếu chưa có chain trong wallet -> báo lỗi rõ ràng
+        throw new Error(
+          `Wrong network. Please add/switch to chainId ${CHAIN_ID} in your wallet.`,
+        );
+      }
     }
   }
 
-  function disconnect() {
-    // MetaMask không hỗ trợ "disconnect" bằng code – mình chỉ xóa local state
-    setAddress(null);
-    setOpen(false);
-    toast("Disconnected");
+  async function connect() {
+    const eth = (window as any).ethereum;
+    if (!eth) {
+      toast.error("No wallet found. Please install MetaMask.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await ensureChain();
+      const accs: string[] = await eth.request({ method: "eth_requestAccounts" });
+      setAccount(accs[0]);
+      toast.success("Wallet connected");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to connect");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function copy() {
-    if (!address) return;
-    navigator.clipboard.writeText(address);
+    if (!account) return;
+    navigator.clipboard.writeText(account);
     toast.success("Address copied");
-    setOpen(false);
   }
 
-  // auto get current account nếu user đã connect trước đó
-  useEffect(() => {
-    (async () => {
-      if ((window as any).ethereum) {
-        const accs = await (window as any).ethereum.request({
-          method: "eth_accounts",
-        });
-        if (accs?.[0]) setAddress(accs[0]);
-      }
-    })();
-  }, []);
+  // Không có API “disconnect” chuẩn với MetaMask;
+  // ta chỉ reset UI state để người dùng bấm Connect lại khi cần.
+  function disconnect() {
+    setAccount(null);
+    toast.info("Disconnected (UI only)");
+  }
 
-  // click outside close
-  useEffect(() => {
-    function onDoc(e: MouseEvent) {
-      if (!ref.current) return;
-      if (!ref.current.contains(e.target as any)) setOpen(false);
-    }
-    document.addEventListener("click", onDoc);
-    return () => document.removeEventListener("click", onDoc);
-  }, []);
-
-  if (!address) {
+  if (!account) {
     return (
-      <Button
-        onClick={connect}
-        className="bg-gradient-to-r from-fuchsia-600 to-cyan-500 hover:opacity-90 shadow-lg shadow-fuchsia-500/20"
-      >
-        Connect Wallet
+      <Button onClick={connect} disabled={loading}>
+        {loading ? "Connecting…" : "Connect Wallet"}
       </Button>
     );
   }
 
+  // Đang connected: nút gọn + menu phụ copy / disconnect
   return (
-    <div className="relative" ref={ref}>
-      <Button
-        onClick={() => setOpen((v) => !v)}
-        className="bg-zinc-800 hover:bg-zinc-700 border border-white/10"
-      >
-        {short(address)}
+    <div className="flex items-center gap-2">
+      <Button variant="secondary" onClick={copy} title="Copy address">
+        {short(account)}
       </Button>
-      {open && (
-        <div className="absolute right-0 mt-2 w-44 rounded-xl border border-white/10 bg-zinc-900/95 p-2 shadow-xl">
-          <button
-            onClick={copy}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-white/5"
-          >
-            <Copy className="h-4 w-4" /> Copy address
-          </button>
-          <button
-            onClick={disconnect}
-            className="mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-red-300 hover:bg-red-400/10"
-          >
-            <LogOut className="h-4 w-4" /> Disconnect
-          </button>
-        </div>
-      )}
+      <Button variant="destructive" onClick={disconnect} title="Disconnect">
+        Disconnect
+      </Button>
     </div>
   );
 }
