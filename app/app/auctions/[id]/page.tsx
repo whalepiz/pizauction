@@ -1,56 +1,73 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getAuction, Auction } from "@/lib/auctionStore";
-import AuctionInfo from "@/components/AuctionInfo";
-import BidForm from "@/components/BidForm";
-import HistoryTable from "@/components/HistoryTable";
+import Link from "next/link";
+import { getAuction, type Auction } from "@/lib/auctionStore";
 import Countdown from "@/components/Countdown";
 import { Button } from "@/components/ui/button";
 
 export default function AuctionDetailPage() {
-  const params = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const [a, setA] = useState<Auction | null>(null);
+  const [item, setItem] = useState<Auction | null>(null);
 
   useEffect(() => {
-    if (!params?.id) return;
-    const item = getAuction(params.id);
-    if (!item) {
-      router.replace("/auctions");
-      return;
-    }
-    setA(item);
-  }, [params?.id, router]);
+    if (typeof window === "undefined") return;
+    const found = getAuction(String(id));
+    setItem(found || null);
+  }, [id]);
 
-  if (!a) return null;
+  const endsIn = useMemo(
+    () => (item ? <Countdown endTime={item.endTimeMs} /> : "—"),
+    [item]
+  );
+
+  if (!item) {
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-gray-950 via-black to-gray-900 text-white">
+        <div className="mx-auto max-w-4xl px-5 py-10">
+          <p className="text-sm text-muted-foreground">Auction not found.</p>
+          <Button variant="outline" className="mt-4" asChild>
+            <Link href="/auctions">Back to Marketplace</Link>
+          </Button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-gray-950 via-black to-gray-900 text-white">
-      <div className="mx-auto max-w-6xl px-5 py-8 space-y-8">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">{a.title}</h1>
-          <Button variant="outline" onClick={() => router.push("/auctions")}>Back</Button>
+      <div className="mx-auto max-w-5xl px-5 py-8 grid gap-8 md:grid-cols-2">
+        <div className="rounded-xl overflow-hidden border border-white/10">
+          <img src={item.imageUrl} alt={item.title} className="w-full h-auto object-cover"/>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-2">
-          <div className="rounded-xl overflow-hidden border border-slate-800">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={a.imageUrl} alt={a.title} className="w-full h-auto" />
+        <div className="space-y-4">
+          <h1 className="text-2xl md:text-3xl font-extrabold">{item.title}</h1>
+
+          <div className="text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Ends in</span>
+              <span className="font-semibold">{endsIn}</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+              <span>Contract</span>
+              <code className="rounded bg-black/30 px-1.5 py-0.5">
+                {item.contractAddress.slice(0,6)}…{item.contractAddress.slice(-4)}
+              </code>
+            </div>
           </div>
 
-          <AuctionInfo
-            totalBids={0 /* (tuỳ chọn) fetchTotalBids() */}
-            timeLeft={<Countdown endTime={a.endTimeMs} />}
-            phase={Date.now() < a.endTimeMs ? "Bidding" : "Closed"}
-          />
+          <div className="flex gap-3 pt-4">
+            {/* Điều hướng về trang / để đặt bid (phiên “thật”) */}
+            <Button onClick={() => router.push("/")}>Bid now</Button>
+            <Button variant="outline" asChild>
+              <Link href="/auctions">Back to Marketplace</Link>
+            </Button>
+          </div>
         </div>
-
-        <BidForm />
-        <HistoryTable />
       </div>
     </main>
   );
 }
-
