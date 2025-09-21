@@ -1,33 +1,41 @@
 "use client";
 
-const KEY = "fhe.images.v1"; // { [address]: url }
+type Meta = {
+  title?: string;
+  imageUrl?: string;
+  description?: string;
+};
 
-function read(): Record<string, string> {
+const KEY = "fhe.meta.v1";
+
+function safeRead(): Record<string, Meta> {
   if (typeof window === "undefined") return {};
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? JSON.parse(raw) : {};
+    return raw ? (JSON.parse(raw) as Record<string, Meta>) : {};
   } catch {
     return {};
   }
 }
 
-function write(map: Record<string, string>) {
+function safeWrite(obj: Record<string, Meta>) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(KEY, JSON.stringify(map));
+    localStorage.setItem(KEY, JSON.stringify(obj));
   } catch {}
 }
 
-export function saveAuctionImage(address: string, url: string) {
-  if (!address || !url) return;
-  const map = read();
-  map[address.toLowerCase()] = url;
-  write(map);
+export function saveAuctionMeta(address: string, meta: Meta) {
+  const db = safeRead();
+  db[address.toLowerCase()] = { ...(db[address.toLowerCase()] || {}), ...meta };
+  safeWrite(db);
+}
+
+export function getAuctionMeta(address: string): Meta | undefined {
+  const db = safeRead();
+  return db[address.toLowerCase()];
 }
 
 export function getAuctionImage(address: string): string | undefined {
-  if (!address) return;
-  const map = read();
-  return map[address.toLowerCase()];
+  return getAuctionMeta(address)?.imageUrl;
 }

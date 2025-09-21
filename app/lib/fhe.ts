@@ -5,11 +5,10 @@ import {
   Contract,
   Interface,
   JsonRpcProvider,
-  Log
 } from "ethers";
 import factoryArtifact from "@/abis/AuctionFactory.json";
 import auctionArtifact from "@/abis/FHEAuction.json";
-import { saveAuctionImage, getAuctionImage } from "./imageStore";
+import { saveAuctionMeta, getAuctionMeta, getAuctionImage } from "./imageStore";
 
 /** ==== ENV ==== */
 export const FACTORY_ADDRESS = process.env.NEXT_PUBLIC_FACTORY_ADDRESS!;
@@ -31,7 +30,7 @@ export async function ensureWallet(chainId = CHAIN_ID) {
   }
   return provider;
 }
-// alias để nút Connect hoạt động
+// alias cho nút Connect
 export const connectWallet = ensureWallet;
 
 /** ==== Read provider ==== */
@@ -73,11 +72,12 @@ export function encodeBid(amountEth: string): string {
   return toHex(u8);
 }
 
-/** ==== Create auction on-chain via Factory ==== */
+/** ==== Create auction via Factory ==== */
 export async function createAuctionOnChain(
   title: string,
   durationHours: number,
   imageUrl: string,
+  description?: string
 ): Promise<{ address: string; endTime: number; item: string }> {
   const factory = await getFactoryWithSigner();
   const seconds = Math.max(1, Math.floor(durationHours * 3600));
@@ -92,11 +92,12 @@ export async function createAuctionOnChain(
   (receipt?.logs || []).forEach((l: any) => {
     try {
       if (l.topics?.[0] === topic) {
-        const parsed = iface.parseLog(l as Log)!;
+        const parsed = iface.parseLog(l as any)!;
+        const args = (parsed as any).args;
         created = {
-          address: (parsed.args[0] as string),
-          item: (parsed.args[1] as string),
-          endTime: Number(parsed.args[2])
+          address: String(args[0]),
+          item: String(args[1]),
+          endTime: Number(args[2]),
         };
       }
     } catch {}
@@ -104,20 +105,20 @@ export async function createAuctionOnChain(
 
   if (!created.address) throw new Error("Create failed: no event parsed");
 
-  // lưu image cục bộ để hiển thị
-  if (imageUrl) saveAuctionImage(created.address, imageUrl);
+  // lưu metadata cục bộ
+  saveAuctionMeta(created.address, { title, imageUrl, description });
 
   return created;
 }
 
-/** ==== Load auctions from chain ==== */
+/** ==== Load auctions from chain + merge local metadata ==== */
 export type OnchainAuction = {
   address: string;
   item: string;
   endTimeMs: number;
   title?: string;
   imageUrl?: string;
-  description?: string; // tạm thời không có nguồn để populate
+  description?: string;
 };
 
 export async function fetchAuctionsFromChain(): Promise<OnchainAuction[]> {
@@ -129,13 +130,14 @@ export async function fetchAuctionsFromChain(): Promise<OnchainAuction[]> {
     const c = new Contract(addr, AUCTION_ABI, provider);
     const item: string = await c.item();
     const endTime: bigint = await c.endTime();
-    const imageUrl = getAuctionImage(addr);
+    const meta = getAuctionMeta(addr) || {};
     return {
       address: addr,
       item,
       endTimeMs: Number(endTime) * 1000,
-      title: item,
-      imageUrl,
+      title: meta.title || item,
+      imageUrl: meta.imageUrl || getAuctionImage(addr),
+      description: meta.description,
     };
   });
 
@@ -150,52 +152,9 @@ export async function bidOnAuction(addr: string, amountEth: string) {
   return tx.wait();
 }
 
-/** ==== Bid history (per contract OR default env) ==== */
-/** Đọc event BidSubmitted(address,bytes,uint256) từ một auction cụ thể.
- *  Nếu không truyền address, dùng NEXT_PUBLIC_AUCTION_ADDRESS.
- *  Tự giảm phạm vi quét (mặc định 20k blocks gần nhất) để tránh timeout RPC.
- */
- /** ==== Bid history (per contract OR default env) ==== */
-export async function fetchBidHistory(
-  fromBlock?: number,
-  toBlock?: number,
-  address?: string
-): Promise<{ user: string; amount: string; timeMs: number }[]> {
-  const provider = new JsonRpcProvider(RPC_URL);
-  const iface = new Interface(AUCTION_ABI);
-  const frag = iface.getEvent("BidSubmitted(address,bytes,uint256)");
-  if (!frag) return [];
-
-  const topic0 = frag.topicHash;
-  const target =
-    address ?? (process.env.NEXT_PUBLIC_AUCTION_ADDRESS as string | undefined);
-  if (!target) return [];
-
-  const latest = await provider.getBlockNumber();
-  const to = toBlock ?? latest;
-  const from = fromBlock ?? Math.max(0, to - 20_000); // quét 20k block gần nhất
-
-  const logs: Log[] = await provider.getLogs({
-    address: target,
-    topics: [topic0],
-    fromBlock: from as any,
-    toBlock: to as any,
-  });
-
-  const rows = logs
-    .map((l) => {
-      try {
-        const parsed = iface.parseLog(l as any);
-        if (!parsed) return null; // 👈 fix thêm check null
-        const bidder: string = parsed.args[0];
-        const ts: number = Number(parsed.args[2]);
-        return { user: bidder, amount: "(encrypted)", timeMs: ts * 1000 };
-      } catch {
-        return null;
-      }
-    })
-    .filter((x): x is { user: string; amount: string; timeMs: number } => !!x)
-    .sort((a, b) => b.timeMs - a.timeMs);
-
-  return rows;
+/** ==== (giữ cho HistoryTable compile an toàn) ==== */
+export async function fetchBidHistory(): Promise<
+  { user: string; amount: string; timeMs: number }[]
+> {
+  return []; // v1 hiển thị lịch sử theo-card; có thể nâng cấp sau
 }
