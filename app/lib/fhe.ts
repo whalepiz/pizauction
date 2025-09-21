@@ -111,7 +111,7 @@ export async function createAuctionOnChain(
   return created;
 }
 
-/** ==== Load auctions from chain + merge local metadata ==== */
+/** ==== Types ==== */
 export type OnchainAuction = {
   address: string;
   item: string;
@@ -121,27 +121,11 @@ export type OnchainAuction = {
   description?: string;
 };
 
-export async function fetchAuctionsFromChain(): Promise<OnchainAuction[]> {
-  const factory = getFactoryRead();
-  const addrs: string[] = await factory.getAllAuctions();
-  const provider = readProvider();
-
-  const calls = addrs.map(async (addr) => {
-    const c = new Contract(addr, AUCTION_ABI, provider);
-    const item: string = await c.item();
-    const endTime: bigint = await c.endTime();
-    const meta = getAuctionMeta(addr) || {};
-    return {
-      address: addr,
-      item,
-      endTimeMs: Number(endTime) * 1000,
-      title: meta.title || item,
-      imageUrl: meta.imageUrl || getAuctionImage(addr),
-      description: meta.description,
-    };
-  });
-
-  return (await Promise.all(calls)).sort((a, b) => a.endTimeMs - b.endTimeMs);
+/** ==== (giữ cho HistoryTable compile an toàn) ==== */
+export async function fetchBidHistory(): Promise<
+  { user: string; amount: string; timeMs: number }[]
+> {
+  return []; // v1 hiển thị lịch sử theo-card; có thể nâng cấp sau
 }
 
 /** ==== Bid per-auction ==== */
@@ -152,12 +136,10 @@ export async function bidOnAuction(addr: string, amountEth: string) {
   return tx.wait();
 }
 
-/** ==== (giữ cho HistoryTable compile an toàn) ==== */
-export async function fetchBidHistory(): Promise<
-  { user: string; amount: string; timeMs: number }[]
-> {
-  return []; // v1 hiển thị lịch sử theo-card; có thể nâng cấp sau
-}
+/* ------------------------------------------------------------------ */
+/* --------------------  CACHE + STABLE FETCH  ---------------------- */
+/* ------------------------------------------------------------------ */
+
 // ==== CACHE KEYS ====
 const AUCTIONS_CACHE_KEY = "fhe.cached.auctions.v1";
 
@@ -211,6 +193,7 @@ async function getReadProviderPreferWallet() {
 }
 
 // ==== Load auctions from chain (ổn định + retry + cache) ====
+// CHỈ GIỮ MỘT HÀM NÀY (đã loại bỏ bản cũ để tránh trùng tên)
 export async function fetchAuctionsFromChain(
   opts?: { retries?: number; delayMs?: number }
 ): Promise<OnchainAuction[]> {
@@ -224,39 +207,36 @@ export async function fetchAuctionsFromChain(
 
       const addrs: string[] = await factoryRead.getAllAuctions();
 
-      // Đọc song song, nhưng "ăn đòn" lỗi mạng bằng allSettled
+      // Đọc song song, chống lỗi mạng bằng allSettled
       const settled = await Promise.allSettled(
         addrs.map(async (addr) => {
           const c = new Contract(addr, AUCTION_ABI, provider);
           const [item, end] = await Promise.all([c.item(), c.endTime()]);
-          const meta = getAuctionImage ? { imageUrl: getAuctionImage(addr) } : {};
+          // Ưu tiên ảnh trong local store (nếu có)
+          const meta = getAuctionMeta(addr) || {};
+          const img = meta.imageUrl || (getAuctionImage ? getAuctionImage(addr) : undefined);
+
           return {
             address: addr,
             item: String(item),
             endTimeMs: Number(end) * 1000,
-            title: undefined,
-            description: undefined,
-            ...(meta || {}),
+            title: meta.title || String(item),
+            imageUrl: img,
+            description: meta.description,
           } as OnchainAuction;
         })
       );
 
-      // Lọc chỉ những cái thành công, rồi merge metadata đã lưu (imageStore)
       const ok = settled
         .filter((s): s is PromiseFulfilledResult<OnchainAuction> => s.status === "fulfilled")
         .map((s) => s.value)
-        .map((x) => {
-          const m = getAuctionImage ? { imageUrl: getAuctionImage(x.address) } : {};
-          return { ...x, ...m };
-        })
         .sort((a, b) => a.endTimeMs - b.endTimeMs);
 
       if (ok.length > 0 || addrs.length === 0) {
-        // Có dữ liệu hợp lệ → ghi cache + trả về
         writeAuctionsCache(ok);
         return ok;
       }
-      // Nếu empty (khả năng RPC vừa chưa index) → retry
+      // Nếu empty (RPC vừa chưa index) → retry
     } catch {
       // ignore & retry
     }
