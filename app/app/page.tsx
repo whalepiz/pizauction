@@ -21,20 +21,25 @@ export default function HomePage() {
     return auctions.slice(start, start + PAGE_SIZE);
   }, [auctions, page]);
 
-  async function load() {
-    try {
-      const list = await fetchAuctionsFromChain();
-      setAuctions(list.sort((a, b) => a.endTimeMs - b.endTimeMs));
-    } catch {
-      /* silent (rate-limit) */
-    }
+  async function loadFresh() {
+    const list = await fetchAuctionsFromChain({ retries: 5, delayMs: 1200 });
+    setAuctions(list.sort((a, b) => a.endTimeMs - b.endTimeMs));
   }
 
   useEffect(() => {
-    load();
-    const id = setInterval(load, 30_000);
+    // 1) Render cache ngay (nếu có) → tránh trắng trang
+    try {
+      const cached = (window as any)?.localStorage
+        ? (JSON.parse(localStorage.getItem("fhe.cached.auctions.v1") || "[]") as OnchainAuction[])
+        : [];
+      if (cached.length) setAuctions(cached.sort((a, b) => a.endTimeMs - b.endTimeMs));
+    } catch {}
+    // 2) Fetch thật + interval
+    loadFresh();
+    const id = setInterval(loadFresh, 30_000);
     return () => clearInterval(id);
   }, []);
+
 
   // ===== optimistic + sync khi vừa tạo xong =====
   async function onCreatedOptimistic(created: {

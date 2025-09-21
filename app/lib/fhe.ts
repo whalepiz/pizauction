@@ -158,3 +158,112 @@ export async function fetchBidHistory(): Promise<
 > {
   return []; // v1 hiển thị lịch sử theo-card; có thể nâng cấp sau
 }
+// ==== CACHE KEYS ====
+const AUCTIONS_CACHE_KEY = "fhe.cached.auctions.v1";
+
+type CachedAuction = {
+  address: string;
+  item: string;
+  endTimeMs: number;
+  title?: string;
+  imageUrl?: string;
+  description?: string;
+};
+
+// Đọc cache nhanh để render trước
+export function readAuctionsCache(): OnchainAuction[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(AUCTIONS_CACHE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as CachedAuction[];
+    return arr;
+  } catch {
+    return [];
+  }
+}
+
+// Ghi cache sau khi fetch thành công
+function writeAuctionsCache(list: OnchainAuction[]) {
+  if (typeof window === "undefined") return;
+  const slim: CachedAuction[] = list.map((x) => ({
+    address: x.address,
+    item: x.item,
+    endTimeMs: x.endTimeMs,
+    title: x.title,
+    imageUrl: x.imageUrl,
+    description: x.description,
+  }));
+  localStorage.setItem(AUCTIONS_CACHE_KEY, JSON.stringify(slim));
+}
+
+// Provider đọc: ưu tiên ví (nếu đã mở & đúng chain), fallback RPC_URL
+async function getReadProviderPreferWallet() {
+  try {
+    const eth = (window as any)?.ethereum;
+    if (eth) {
+      const bp = new BrowserProvider(eth);
+      const net = await bp.getNetwork();
+      if (Number(net.chainId) === CHAIN_ID) return bp;
+    }
+  } catch { /* ignore */ }
+  return new JsonRpcProvider(RPC_URL);
+}
+
+// ==== Load auctions from chain (ổn định + retry + cache) ====
+export async function fetchAuctionsFromChain(
+  opts?: { retries?: number; delayMs?: number }
+): Promise<OnchainAuction[]> {
+  const retries = opts?.retries ?? 5;
+  const delayMs = opts?.delayMs ?? 1200;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const provider = await getReadProviderPreferWallet();
+      const factoryRead = new Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
+
+      const addrs: string[] = await factoryRead.getAllAuctions();
+
+      // Đọc song song, nhưng "ăn đòn" lỗi mạng bằng allSettled
+      const settled = await Promise.allSettled(
+        addrs.map(async (addr) => {
+          const c = new Contract(addr, AUCTION_ABI, provider);
+          const [item, end] = await Promise.all([c.item(), c.endTime()]);
+          const meta = getAuctionImage ? { imageUrl: getAuctionImage(addr) } : {};
+          return {
+            address: addr,
+            item: String(item),
+            endTimeMs: Number(end) * 1000,
+            title: undefined,
+            description: undefined,
+            ...(meta || {}),
+          } as OnchainAuction;
+        })
+      );
+
+      // Lọc chỉ những cái thành công, rồi merge metadata đã lưu (imageStore)
+      const ok = settled
+        .filter((s): s is PromiseFulfilledResult<OnchainAuction> => s.status === "fulfilled")
+        .map((s) => s.value)
+        .map((x) => {
+          const m = getAuctionImage ? { imageUrl: getAuctionImage(x.address) } : {};
+          return { ...x, ...m };
+        })
+        .sort((a, b) => a.endTimeMs - b.endTimeMs);
+
+      if (ok.length > 0 || addrs.length === 0) {
+        // Có dữ liệu hợp lệ → ghi cache + trả về
+        writeAuctionsCache(ok);
+        return ok;
+      }
+      // Nếu empty (khả năng RPC vừa chưa index) → retry
+    } catch {
+      // ignore & retry
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+
+  // Hết retry → trả cache (nếu có), không trắng trang
+  const cached = readAuctionsCache();
+  return cached;
+}
