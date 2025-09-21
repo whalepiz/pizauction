@@ -3,29 +3,140 @@
 import {
   BrowserProvider,
   Contract,
-  JsonRpcProvider,
   Interface,
-  Log,
+  JsonRpcProvider,
+  Log
 } from "ethers";
+import factoryArtifact from "@/abis/AuctionFactory.json";
 import auctionArtifact from "@/abis/FHEAuction.json";
+import { saveAuctionImage } from "./imageStore";
 
-/** ==== ENV / CONSTANTS ==== */
-export const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_AUCTION_ADDRESS!;
+/** ==== ENV ==== */
+export const FACTORY_ADDRESS = process.env.NEXT_PUBLIC_FACTORY_ADDRESS!;
 export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111);
 export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL!;
 
-/** Lấy ABI mảng từ artifact Hardhat (artifact có field .abi) */
-const ABI: any = (auctionArtifact as any).abi ?? auctionArtifact;
+/** ==== ABIs ==== */
+const FACTORY_ABI: any = (factoryArtifact as any).abi ?? factoryArtifact;
+const AUCTION_ABI: any = (auctionArtifact as any).abi ?? auctionArtifact;
 
-/** ==== Helpers mã hoá demo (bytes placeholder) ==== */
+/** ==== Wallet helpers ==== */
+export async function ensureWallet(chainId = CHAIN_ID) {
+  if (!(window as any).ethereum) throw new Error("No wallet found");
+  await (window as any).ethereum.request({ method: "eth_requestAccounts" });
+  const provider = new BrowserProvider((window as any).ethereum);
+  const net = await provider.getNetwork();
+  if (Number(net.chainId) !== chainId) {
+    throw new Error(`Wrong network. Please switch to chainId ${chainId}.`);
+  }
+  return provider;
+}
+
+/** ==== Read provider ==== */
+function readProvider() {
+  return new JsonRpcProvider(RPC_URL);
+}
+
+/** ==== Contracts ==== */
+export async function getFactoryWithSigner() {
+  const provider = await ensureWallet();
+  const signer = await provider.getSigner();
+  return new Contract(FACTORY_ADDRESS, FACTORY_ABI, signer);
+}
+
+export function getFactoryRead() {
+  return new Contract(FACTORY_ADDRESS, FACTORY_ABI, readProvider());
+}
+
+export async function getAuctionWithSigner(addr: string) {
+  const provider = await ensureWallet();
+  const signer = await provider.getSigner();
+  return new Contract(addr, AUCTION_ABI, signer);
+}
+
+export function getAuctionRead(addr: string) {
+  return new Contract(addr, AUCTION_ABI, readProvider());
+}
+
+/** ==== Create auction on-chain ==== */
+export async function createAuctionOnChain(
+  title: string,
+  durationHours: number,
+  imageUrl: string
+): Promise<{ address: string; endTime: number; item: string }> {
+  const factory = await getFactoryWithSigner();
+  const seconds = Math.max(1, Math.floor(durationHours * 3600));
+  const tx = await factory.createAuction(title, seconds);
+  const receipt = await tx.wait();
+
+  // Parse event AuctionCreated
+  const iface = new Interface(FACTORY_ABI);
+  const evt = iface.getEvent("AuctionCreated(address,string,uint256,address)");
+  const topic = evt!.topicHash;
+
+  let created = { address: "", endTime: 0, item: title };
+  (receipt?.logs || []).forEach((l: any) => {
+    try {
+      if (l.topics?.[0] === topic) {
+        const parsed = iface.parseLog(l as Log)!;
+        created = {
+          address: (parsed.args[0] as string),
+          item: (parsed.args[1] as string),
+          endTime: Number(parsed.args[2])
+        };
+      }
+    } catch {}
+  });
+
+  if (!created.address) throw new Error("Create failed: no event parsed");
+
+  // Lưu image local để hiển thị đẹp
+  saveAuctionImage(created.address, imageUrl);
+
+  return created;
+}
+
+/** ==== Load auctions from chain ==== */
+export type OnchainAuction = {
+  address: string;
+  item: string;
+  endTimeMs: number;
+  imageUrl?: string;
+};
+
+export async function fetchAuctionsFromChain(): Promise<OnchainAuction[]> {
+  const factory = getFactoryRead();
+  const addrs: string[] = await factory.getAllAuctions();
+  const provider = readProvider();
+
+  // Đọc song song item & endTime từ từng auction
+  const calls = addrs.map(async (addr) => {
+    const c = new Contract(addr, AUCTION_ABI, provider);
+    const item: string = await c.item();
+    const endTime: bigint = await c.endTime();
+    return {
+      address: addr,
+      item,
+      endTimeMs: Number(endTime) * 1000
+    };
+  });
+
+  const list = await Promise.all(calls);
+
+  // Gắn imageUrl đã lưu (nếu có)
+  const { getAuctionImage } = await import("./imageStore");
+  return list.map((x) => ({ ...x, imageUrl: getAuctionImage(x.address) }));
+}
+
+/** ==== Bidding per-auction ==== */
+/** Chuyển số → bytes hex đơn giản (placeholder “mã hóa”). */
 function toHex(u8: Uint8Array): string {
   let out = "0x";
   for (let i = 0; i < u8.length; i++) out += u8[i].toString(16).padStart(2, "0");
   return out;
 }
-
-export function encryptBidBytes(amountEth: string): string {
-  const scaled = Math.floor(Number(amountEth) * 1e6); // 6 chữ số thập phân
+export function encodeBid(amountEth: string): string {
+  const scaled = Math.floor(Number(amountEth) * 1e6);
   const u8 = new Uint8Array(4);
   u8[0] = (scaled >>> 24) & 0xff;
   u8[1] = (scaled >>> 16) & 0xff;
@@ -34,96 +145,9 @@ export function encryptBidBytes(amountEth: string): string {
   return toHex(u8);
 }
 
-/** ==== Wallet / Contracts ==== */
-export async function connectWallet() {
-  if (!(window as any).ethereum) throw new Error("No wallet found");
-  await (window as any).ethereum.request({ method: "eth_requestAccounts" });
-
-  const provider = new BrowserProvider((window as any).ethereum);
-  const net = await provider.getNetwork();
-  if (Number(net.chainId) !== CHAIN_ID) {
-    throw new Error(`Wrong network. Please switch to chainId ${CHAIN_ID}.`);
-  }
-}
-
-export async function getAuctionContract() {
-  if (!(window as any).ethereum) throw new Error("No wallet found");
-  const provider = new BrowserProvider((window as any).ethereum);
-  const signer = await provider.getSigner();
-  return new Contract(CONTRACT_ADDRESS, ABI, signer);
-}
-
-/** Read-only contract (không cần ví) */
-function getReadContract() {
-  const provider = new JsonRpcProvider(RPC_URL);
-  return new Contract(CONTRACT_ADDRESS, ABI, provider);
-}
-
-/** Submit bid: bytes “mã hoá” gửi on-chain */
-export async function placeEncryptedBid(amountEth: string) {
-  const contract = await getAuctionContract();
-  const enc = encryptBidBytes(amountEth);
-  const tx = await contract.placeBid(enc);
+export async function bidOnAuction(addr: string, amountEth: string) {
+  const c = await getAuctionWithSigner(addr);
+  const enc = encodeBid(amountEth);
+  const tx = await c.placeBid(enc);
   return tx.wait();
-}
-
-/** ==== Trạng thái on-chain: endTime & phase ==== */
-export async function readAuctionState() {
-  const c = getReadContract();
-  const end = Number(await c.endTime()); // seconds
-  const now = Math.floor(Date.now() / 1000);
-  return {
-    endTimeMs: end * 1000,
-    phase: (now < end ? "Bidding" : "Closed") as "Bidding" | "Closed",
-    now,
-  };
-}
-
-/** ==== Lịch sử thật từ event BidSubmitted(address,bytes,uint256) ==== */
-export async function fetchBidHistory(fromBlock?: number, toBlock?: number) {
-  if (!RPC_URL) throw new Error("Missing NEXT_PUBLIC_RPC_URL");
-  const provider = new JsonRpcProvider(RPC_URL);
-
-  const iface = new Interface(ABI);
-  const fragment = iface.getEvent("BidSubmitted(address,bytes,uint256)");
-  if (!fragment) {
-    throw new Error("ABI missing event: BidSubmitted(address,bytes,uint256)");
-  }
-  const topic = fragment.topicHash;
-
-  /** 👇 Lấy block deploy từ ENV để giới hạn phạm vi quét */
-  const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 0);
-
-  const filter = {
-    address: CONTRACT_ADDRESS,
-    topics: [topic],
-    fromBlock: fromBlock ?? deployBlock,   // dùng DEPLOY BLOCK nếu không truyền fromBlock
-    toBlock: toBlock ?? "latest",
-  };
-
-  const logs: Log[] = await provider.getLogs(filter);
-
-  return logs
-    .map((l) => {
-      const parsed = iface.parseLog(l);
-      if (!parsed) return null; // type-safety
-      const bidder: string = parsed.args[0];       // address
-      // const enc: string = parsed.args[1];       // bytes (encryptedAmount) - nếu cần show
-      const timestamp: bigint = parsed.args[2];    // uint256
-      return {
-        user: bidder,
-        amount: "(encrypted)",
-        timeMs: Number(timestamp) * 1000,
-      };
-    })
-    .filter(
-      (x): x is { user: string; amount: string; timeMs: number } => x !== null
-    )
-    .sort((a, b) => b.timeMs - a.timeMs);
-}
-
-/** (Tuỳ chọn) Đếm tổng số bid từ event để hiển thị UI */
-export async function fetchTotalBids() {
-  const history = await fetchBidHistory();
-  return history.length;
 }

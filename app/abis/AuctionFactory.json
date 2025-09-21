@@ -1,0 +1,43 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "createAuction",
+      "inputs": [
+        { "name": "item", "type": "string" },
+        { "name": "durationSeconds", "type": "uint256" }
+      ],
+      "outputs": [{ "type": "address" }],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "getAllAuctions",
+      "inputs": [],
+      "outputs": [{ "type": "address[]"}],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "infoByAuction",
+      "inputs": [{ "type": "address", "name": "" }],
+      "outputs": [
+        { "type": "string", "name": "item" },
+        { "type": "uint256", "name": "endTime" },
+        { "type": "address", "name": "creator" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "AuctionCreated",
+      "inputs": [
+        { "name": "auction", "type": "address", "indexed": true },
+        { "name": "item", "type": "string", "indexed": false },
+        { "name": "endTime", "type": "uint256", "indexed": false },
+        { "name": "creator", "type": "address", "indexed": true }
+      ],
+      "anonymous": false
+    }
+  ]
+}
