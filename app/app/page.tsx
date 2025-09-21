@@ -26,7 +26,6 @@ export default function HomePage() {
         const s = await readAuctionState();
         setEndTimeMs(s.endTimeMs);
         setPhase(s.phase as Phase);
-        // đếm số bid từ event (nếu RPC cho phép)
         const n = await fetchTotalBids().catch(() => 0);
         setTotalBids(n);
       } catch (e) {
@@ -34,7 +33,7 @@ export default function HomePage() {
       }
     };
     load();
-    timer = setInterval(load, 30_000); // refresh 30s
+    timer = setInterval(load, 30_000);
     return () => clearInterval(timer);
   }, []);
 
@@ -60,7 +59,14 @@ export default function HomePage() {
               Repo
             </a>
           </Button>
-          <Button onClick={onConnect} className={connected ? "bg-emerald-500 hover:bg-emerald-400" : ""}>
+          {/* ✅ thêm nút Marketplace */}
+          <Button variant="outline" asChild>
+            <a href="/auctions">Marketplace</a>
+          </Button>
+          <Button
+            onClick={onConnect}
+            className={connected ? "bg-emerald-500 hover:bg-emerald-400" : ""}
+          >
             {connected ? "Wallet Connected" : "Connect Wallet"}
           </Button>
         </div>
@@ -68,22 +74,13 @@ export default function HomePage() {
 
       {/* body */}
       <div className="mx-auto max-w-6xl px-5 pb-16 space-y-8">
-        {/* hero info */}
         <AuctionInfo
           totalBids={totalBids}
-          timeLeft={
-            endTimeMs ? <Countdown endTime={endTimeMs} /> : "—"
-          }
+          timeLeft={endTimeMs ? <Countdown endTime={endTimeMs} /> : "—"}
           phase={phase}
         />
-
-        {/* bid form */}
         <BidForm />
-
-        {/* on-chain history */}
         <HistoryTable />
-
-        {/* status + faq */}
         <div className="grid gap-6 md:grid-cols-2">
           <StatusPanel logs={fakeLogs} />
           <FaqPanel />

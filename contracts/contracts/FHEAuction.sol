@@ -14,7 +14,10 @@ contract FHEAuction {
     // Lưu ciphertext theo địa chỉ (dùng bytes để không đụng tới kiểu euint*)
     mapping(address => bytes) private bids;
 
-    event BidSubmitted(address indexed bidder, uint256 timestamp);
+    /// @notice Event phát khi có bid mới
+    event BidSubmitted(address indexed bidder, bytes encryptedAmount, uint256 timestamp);
+
+    /// @notice Event phát khi kết thúc đấu giá
     event AuctionEnded(uint256 timestamp);
 
     constructor(string memory _item, uint256 _biddingDurationSeconds) {
@@ -26,7 +29,9 @@ contract FHEAuction {
     function placeBid(bytes calldata encryptedAmount) external {
         require(block.timestamp < endTime, "Auction ended");
         bids[msg.sender] = encryptedAmount;
-        emit BidSubmitted(msg.sender, block.timestamp);
+
+        // phát event với cả ciphertext
+        emit BidSubmitted(msg.sender, encryptedAmount, block.timestamp);
     }
 
     /// @notice Kết thúc đấu giá (placeholder)
