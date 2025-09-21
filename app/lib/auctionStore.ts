@@ -1,31 +1,40 @@
 "use client";
 
-// Tạo ID không phụ thuộc package ngoài.
-// Ưu tiên dùng crypto.randomUUID() nếu có (browser/Node 18+), fallback nếu không có.
-function genId(): string {
-  const randomUUID = (globalThis as any)?.crypto?.randomUUID as
-    | undefined
-    | (() => string);
-
-  if (typeof randomUUID === "function") {
-    return randomUUID();
-  }
-  // Fallback đơn giản, đủ dùng cho client demo
-  return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
+/**
+ * Auction metadata chỉ phục vụ UI (tiêu đề, ảnh, thời gian). Bid vẫn gọi contract thật.
+ * Nếu muốn on-chain hoàn toàn: tạo AuctionFactory + event AuctionCreated rồi thay thế tầng này.
+ */
 
 export type Auction = {
   id: string;
   title: string;
   imageUrl: string;
   description?: string;
-  endTimeMs: number;            // khi nào đóng (UI)
-  contractAddress: string;      // vẫn dùng contract hiện tại
+  endTimeMs: number;       // khi nào kết thúc (ms)
+  contractAddress: string; // contract đấu giá hiện tại (dùng chung)
   createdBy?: string;
   createdAt: number;
 };
 
 const KEY = "fhe.auctions.v1";
+
+/** Tạo ID ổn định, không cần cài uuid */
+function genId(): string {
+  if (typeof window !== "undefined" && "crypto" in window) {
+    // @ts-ignore — randomUUID tồn tại trên hầu hết trình duyệt hiện đại
+    if (typeof window.crypto.randomUUID === "function") {
+      // @ts-ignore
+      return window.crypto.randomUUID();
+    }
+  }
+  return (
+    "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = Math.floor(Math.random() * 16);
+      const v = c === "x" ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    }) + "-" + Date.now().toString(16)
+  );
+}
 
 function readAll(): Auction[] {
   if (typeof window === "undefined") return [];
@@ -38,6 +47,7 @@ function writeAll(list: Auction[]) {
   localStorage.setItem(KEY, JSON.stringify(list));
 }
 
+/** Dùng để seed 1 lần khi trống (tuỳ chọn) */
 export function seedIfEmpty(defaultContract: string) {
   if (typeof window === "undefined") return;
   const exist = readAll();
@@ -96,14 +106,19 @@ export function getAuctions(): Auction[] {
   return readAll().sort((a, b) => a.endTimeMs - b.endTimeMs);
 }
 
-export function getAuction(id: string): Auction | undefined {
-  return readAll().find((x) => x.id === id);
-}
-
 export function createAuction(input: Omit<Auction, "id" | "createdAt">) {
   const list = readAll();
   const item: Auction = { ...input, id: genId(), createdAt: Date.now() };
   list.push(item);
   writeAll(list);
   return item;
+}
+
+/** Cho phép lắng nghe thay đổi (đồng bộ giữa tab) */
+export function onAuctionsChanged(cb: () => void) {
+  const handler = (e: StorageEvent) => {
+    if (e.key === KEY) cb();
+  };
+  window.addEventListener("storage", handler);
+  return () => window.removeEventListener("storage", handler);
 }
