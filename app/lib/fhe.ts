@@ -78,7 +78,6 @@ export async function createAuctionOnChain(
   title: string,
   durationHours: number,
   imageUrl: string,
-  // description?: string  // hiện tại không lưu meta mô tả trong imageStore
 ): Promise<{ address: string; endTime: number; item: string }> {
   const factory = await getFactoryWithSigner();
   const seconds = Math.max(1, Math.floor(durationHours * 3600));
@@ -137,7 +136,6 @@ export async function fetchAuctionsFromChain(): Promise<OnchainAuction[]> {
       endTimeMs: Number(endTime) * 1000,
       title: item,
       imageUrl,
-      // description: undefined
     };
   });
 
@@ -150,4 +148,52 @@ export async function bidOnAuction(addr: string, amountEth: string) {
   const enc = encodeBid(amountEth);
   const tx = await c.placeBid(enc);
   return tx.wait();
+}
+
+/** ==== Bid history (per contract OR default env) ==== */
+/** Đọc event BidSubmitted(address,bytes,uint256) từ một auction cụ thể.
+ *  Nếu không truyền address, dùng NEXT_PUBLIC_AUCTION_ADDRESS.
+ *  Tự giảm phạm vi quét (mặc định 20k blocks gần nhất) để tránh timeout RPC.
+ */
+export async function fetchBidHistory(
+  fromBlock?: number,
+  toBlock?: number,
+  address?: string
+): Promise<{ user: string; amount: string; timeMs: number }[]> {
+  const provider = new JsonRpcProvider(RPC_URL);
+  const iface = new Interface(AUCTION_ABI);
+  const frag = iface.getEvent("BidSubmitted(address,bytes,uint256)");
+  if (!frag) return [];
+
+  const topic0 = frag.topicHash;
+  const target =
+    address ?? (process.env.NEXT_PUBLIC_AUCTION_ADDRESS as string | undefined);
+  if (!target) return [];
+
+  const latest = await provider.getBlockNumber();
+  const to = toBlock ?? latest;
+  const from = fromBlock ?? Math.max(0, to - 20_000); // quét 20k blocks gần nhất
+
+  const logs: Log[] = await provider.getLogs({
+    address: target,
+    topics: [topic0],
+    fromBlock: from as any,
+    toBlock: to as any,
+  });
+
+  const rows = logs
+    .map((l) => {
+      try {
+        const parsed = iface.parseLog(l as any);
+        const bidder: string = parsed.args[0];
+        const ts: number = Number(parsed.args[2]);
+        return { user: bidder, amount: "(encrypted)", timeMs: ts * 1000 };
+      } catch {
+        return null;
+      }
+    })
+    .filter((x): x is { user: string; amount: string; timeMs: number } => !!x)
+    .sort((a, b) => b.timeMs - a.timeMs);
+
+  return rows;
 }
