@@ -4,37 +4,41 @@ import { useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { connectWallet, placeEncryptedBid } from "@/lib/fhe";
+import { connectWallet, bidOnAuction } from "@/lib/fhe";
+import { toast } from "sonner";
+
+const DEFAULT_AUCTION = process.env.NEXT_PUBLIC_AUCTION_ADDRESS; // dùng contract mặc định nếu có
 
 export default function BidForm() {
   const [amount, setAmount] = useState("");
-  const [status, setStatus] = useState<"" | "pending" | "ok" | "err">("");
-  const [msg, setMsg] = useState<string>("");
+  const [busy, setBusy] = useState(false);
 
   async function onSubmit() {
     if (!amount) return;
+    if (!DEFAULT_AUCTION) {
+      toast.error("Missing NEXT_PUBLIC_AUCTION_ADDRESS (env).");
+      return;
+    }
     try {
-      setStatus("pending"); setMsg("Encrypting & submitting your bid…");
+      setBusy(true);
       await connectWallet();
-      await placeEncryptedBid(amount);
-      setStatus("ok"); setMsg("Bid received — your encrypted bid is on-chain.");
+      await bidOnAuction(DEFAULT_AUCTION, amount);
+      toast.success("Bid submitted on-chain");
       setAmount("");
     } catch (e: any) {
-      console.error(e);
-      setStatus("err");
-      setMsg(e?.message || "Failed to submit bid.");
+      toast.error(e?.message || "Failed to submit bid");
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
-    <Card className="shadow-lg mt-6 bg-neutral-900/60 border-neutral-800">
+    <Card className="shadow-lg mt-6">
       <CardHeader>
         <CardTitle className="text-xl">Place a Private Bid</CardTitle>
       </CardHeader>
       <CardContent>
-        <label className="text-sm text-muted-foreground mb-1 block">
-          Amount (ETH)
-        </label>
+        <label className="text-sm text-muted-foreground mb-1 block">Amount (ETH)</label>
         <Input
           type="number"
           placeholder="Enter bid amount"
@@ -44,27 +48,15 @@ export default function BidForm() {
           min="0"
           step="0.0001"
         />
-        {status && (
-          <p
-            className={
-              "text-sm " +
-              (status === "ok"
-                ? "text-emerald-400"
-                : status === "err"
-                ? "text-rose-400"
-                : "text-neutral-300")
-            }
-          >
-            {msg}
+        {!DEFAULT_AUCTION && (
+          <p className="text-xs text-amber-400">
+            NOTE: Set <code>NEXT_PUBLIC_AUCTION_ADDRESS</code> in your env to enable this form.
           </p>
         )}
-        <p className="text-xs text-neutral-400 mt-2">
-          We encrypt this value in-browser before submitting.
-        </p>
       </CardContent>
       <CardFooter>
-        <Button className="w-full" onClick={onSubmit} disabled={!amount || status === "pending"}>
-          {status === "pending" ? "Submitting…" : "Submit Encrypted Bid"}
+        <Button className="w-full" onClick={onSubmit} disabled={!amount || busy || !DEFAULT_AUCTION}>
+          {busy ? "Submitting…" : "Submit Encrypted Bid"}
         </Button>
       </CardFooter>
     </Card>
