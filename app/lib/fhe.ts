@@ -70,8 +70,11 @@ export async function fetchBidHistory(fromBlock?: number, toBlock?: number) {
   const provider = new JsonRpcProvider(RPC_URL);
 
   const iface = new Interface(ABI);
-  // Trong ethers v6, lấy fragment bằng signature đầy đủ rồi dùng topicHash
+  // Trong ethers v6, getEvent có thể trả null -> cần check
   const fragment = iface.getEvent("BidSubmitted(address,bytes,uint256)");
+  if (!fragment) {
+    throw new Error("ABI missing event: BidSubmitted(address,bytes,uint256)");
+  }
   const topic = fragment.topicHash;
 
   const filter = {
@@ -87,7 +90,7 @@ export async function fetchBidHistory(fromBlock?: number, toBlock?: number) {
     .map((l) => {
       const parsed = iface.parseLog(l);
       const bidder: string = parsed.args[0];       // address
-      // const enc: string = parsed.args[1];       // bytes (encryptedAmount) - nếu cần hiển thị
+      // const enc: string = parsed.args[1];       // bytes (encryptedAmount)
       const timestamp: bigint = parsed.args[2];    // uint256
       return {
         user: bidder,
