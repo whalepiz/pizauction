@@ -91,10 +91,13 @@ export async function fetchBidHistory(fromBlock?: number, toBlock?: number) {
   }
   const topic = fragment.topicHash;
 
+  /** 👇 Lấy block deploy từ ENV để giới hạn phạm vi quét */
+  const deployBlock = Number(process.env.NEXT_PUBLIC_DEPLOY_BLOCK || 0);
+
   const filter = {
     address: CONTRACT_ADDRESS,
     topics: [topic],
-    fromBlock: fromBlock ?? 0,
+    fromBlock: fromBlock ?? deployBlock,   // dùng DEPLOY BLOCK nếu không truyền fromBlock
     toBlock: toBlock ?? "latest",
   };
 
