@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import AuctionInfo from "@/components/AuctionInfo";
 import BidForm from "@/components/BidForm";
@@ -7,14 +8,35 @@ import StatusPanel from "@/components/StatusPanel";
 import FaqPanel from "@/components/FaqPanel";
 import HistoryTable from "@/components/HistoryTable";
 import Countdown from "@/components/Countdown";
-import { connectWallet } from "@/lib/fhe";
+import { connectWallet, readAuctionState, fetchTotalBids } from "@/lib/fhe";
+
+type Phase = "Bidding" | "Closed";
 
 export default function HomePage() {
   const [connected, setConnected] = useState(false);
+  const [endTimeMs, setEndTimeMs] = useState<number | null>(null);
+  const [phase, setPhase] = useState<Phase>("Bidding");
+  const [totalBids, setTotalBids] = useState<number>(0);
   const fakeLogs = ["Auction started", "New bid submitted"];
 
-  // cho demo: kết thúc sau 3 giờ tính từ lúc mở trang
-  const auctionEnd = Date.now() + 3 * 60 * 60 * 1000;
+  useEffect(() => {
+    let timer: any;
+    const load = async () => {
+      try {
+        const s = await readAuctionState();
+        setEndTimeMs(s.endTimeMs);
+        setPhase(s.phase as Phase);
+        // đếm số bid từ event (nếu RPC cho phép)
+        const n = await fetchTotalBids().catch(() => 0);
+        setTotalBids(n);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    load();
+    timer = setInterval(load, 30_000); // refresh 30s
+    return () => clearInterval(timer);
+  }, []);
 
   async function onConnect() {
     try {
@@ -48,15 +70,17 @@ export default function HomePage() {
       <div className="mx-auto max-w-6xl px-5 pb-16 space-y-8">
         {/* hero info */}
         <AuctionInfo
-          totalBids={12}
-          timeLeft={<Countdown endTime={auctionEnd} />}
-          phase="Bidding"
+          totalBids={totalBids}
+          timeLeft={
+            endTimeMs ? <Countdown endTime={endTimeMs} /> : "—"
+          }
+          phase={phase}
         />
 
         {/* bid form */}
         <BidForm />
 
-        {/* history mock */}
+        {/* on-chain history */}
         <HistoryTable />
 
         {/* status + faq */}

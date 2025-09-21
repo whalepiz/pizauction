@@ -53,6 +53,13 @@ export async function getAuctionContract() {
   return new Contract(CONTRACT_ADDRESS, ABI, signer);
 }
 
+/** Read-only contract (không cần ví) */
+function getReadContract() {
+  const provider = new JsonRpcProvider(RPC_URL);
+  return new Contract(CONTRACT_ADDRESS, ABI, provider);
+}
+
+/** Submit bid: bytes “mã hoá” gửi on-chain */
 export async function placeEncryptedBid(amountEth: string) {
   const contract = await getAuctionContract();
   const enc = encryptBidBytes(amountEth);
@@ -60,7 +67,19 @@ export async function placeEncryptedBid(amountEth: string) {
   return tx.wait();
 }
 
-/** ==== Đọc lịch sử thật từ on-chain qua event BidSubmitted ==== */
+/** ==== Trạng thái on-chain: endTime & phase ==== */
+export async function readAuctionState() {
+  const c = getReadContract();
+  const end = Number(await c.endTime()); // seconds
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    endTimeMs: end * 1000,
+    phase: (now < end ? "Bidding" : "Closed") as "Bidding" | "Closed",
+    now,
+  };
+}
+
+/** ==== Lịch sử thật từ event BidSubmitted(address,bytes,uint256) ==== */
 export async function fetchBidHistory(fromBlock?: number, toBlock?: number) {
   if (!RPC_URL) throw new Error("Missing NEXT_PUBLIC_RPC_URL");
   const provider = new JsonRpcProvider(RPC_URL);
@@ -84,17 +103,24 @@ export async function fetchBidHistory(fromBlock?: number, toBlock?: number) {
   return logs
     .map((l) => {
       const parsed = iface.parseLog(l);
-      if (!parsed) {
-        return null;
-      }
-      const bidder: string = parsed.args[0];
-      const timestamp: bigint = parsed.args[2];
+      if (!parsed) return null; // type-safety
+      const bidder: string = parsed.args[0];       // address
+      // const enc: string = parsed.args[1];       // bytes (encryptedAmount) - nếu cần show
+      const timestamp: bigint = parsed.args[2];    // uint256
       return {
         user: bidder,
         amount: "(encrypted)",
         timeMs: Number(timestamp) * 1000,
       };
     })
-    .filter((x): x is { user: string; amount: string; timeMs: number } => x !== null)
+    .filter(
+      (x): x is { user: string; amount: string; timeMs: number } => x !== null
+    )
     .sort((a, b) => b.timeMs - a.timeMs);
+}
+
+/** (Tuỳ chọn) Đếm tổng số bid từ event để hiển thị UI */
+export async function fetchTotalBids() {
+  const history = await fetchBidHistory();
+  return history.length;
 }
