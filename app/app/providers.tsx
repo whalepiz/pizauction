@@ -1,13 +1,7 @@
 "use client";
-
-import { Toaster } from "@/components/ui/sonner";
+import React from "react";
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  return (
-    <>
-      {children}
-      <Toaster richColors closeButton />
-    </>
-  );
+  // Toaster đã được render ở layout.tsx, không cần thêm ở đây
+  return <>{children}</>;
 }
-

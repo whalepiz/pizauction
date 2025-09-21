@@ -9,7 +9,7 @@ import {
 } from "ethers";
 import factoryArtifact from "@/abis/AuctionFactory.json";
 import auctionArtifact from "@/abis/FHEAuction.json";
-import { saveAuctionMeta, getAuctionMeta } from "./imageStore";
+import { saveAuctionImage, getAuctionImage } from "./imageStore";
 
 /** ==== ENV ==== */
 export const FACTORY_ADDRESS = process.env.NEXT_PUBLIC_FACTORY_ADDRESS!;
@@ -78,7 +78,7 @@ export async function createAuctionOnChain(
   title: string,
   durationHours: number,
   imageUrl: string,
-  description?: string
+  // description?: string  // hiện tại không lưu meta mô tả trong imageStore
 ): Promise<{ address: string; endTime: number; item: string }> {
   const factory = await getFactoryWithSigner();
   const seconds = Math.max(1, Math.floor(durationHours * 3600));
@@ -105,12 +105,8 @@ export async function createAuctionOnChain(
 
   if (!created.address) throw new Error("Create failed: no event parsed");
 
-  // lưu metadata cục bộ để hiển thị đẹp
-  saveAuctionMeta(created.address, {
-    title,
-    imageUrl,
-    description
-  });
+  // lưu image cục bộ để hiển thị
+  if (imageUrl) saveAuctionImage(created.address, imageUrl);
 
   return created;
 }
@@ -122,7 +118,7 @@ export type OnchainAuction = {
   endTimeMs: number;
   title?: string;
   imageUrl?: string;
-  description?: string;
+  description?: string; // tạm thời không có nguồn để populate
 };
 
 export async function fetchAuctionsFromChain(): Promise<OnchainAuction[]> {
@@ -134,14 +130,14 @@ export async function fetchAuctionsFromChain(): Promise<OnchainAuction[]> {
     const c = new Contract(addr, AUCTION_ABI, provider);
     const item: string = await c.item();
     const endTime: bigint = await c.endTime();
-    const meta = getAuctionMeta(addr) || {};
+    const imageUrl = getAuctionImage(addr);
     return {
       address: addr,
       item,
       endTimeMs: Number(endTime) * 1000,
-      title: meta.title || item,
-      imageUrl: meta.imageUrl,
-      description: meta.description
+      title: item,
+      imageUrl,
+      // description: undefined
     };
   });
 
