@@ -4,86 +4,52 @@ import { useEffect, useMemo, useState } from "react";
 import WalletButton from "@/components/WalletButton";
 import CreateAuctionForm from "@/components/CreateAuctionForm";
 import AuctionCard from "@/components/AuctionCard";
-import { fetchAuctionsFromChain, OnchainAuction } from "@/lib/fhe";
-
-const PAGE_SIZE = 12; // 4 cột x 3 hàng
+import {
+  fetchAuctionsFromChain,
+  readAuctionsCache,
+  type OnchainAuction,
+} from "@/lib/fhe";
 
 export default function HomePage() {
   const [auctions, setAuctions] = useState<OnchainAuction[]>([]);
-  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(false);
 
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(auctions.length / PAGE_SIZE)),
-    [auctions.length]
-  );
+  // pagination: 4 cols x 3 rows
+  const pageSize = 12;
+  const [page, setPage] = useState(1);
+
+  const totalPages = Math.max(1, Math.ceil(auctions.length / pageSize));
   const visible = useMemo(() => {
-    const start = page * PAGE_SIZE;
-    return auctions.slice(start, start + PAGE_SIZE);
+    const start = (page - 1) * pageSize;
+    return auctions.slice(start, start + pageSize);
   }, [auctions, page]);
 
-  async function loadFresh() {
-    const list = await fetchAuctionsFromChain({ retries: 5, delayMs: 1200 });
-    setAuctions(list.sort((a, b) => a.endTimeMs - b.endTimeMs));
+  async function load(force = false) {
+    // 1) Hiển thị tức thì bằng cache (nếu có)
+    if (!force) {
+      const cached = readAuctionsCache();
+      if (cached.length) setAuctions(cached);
+    }
+
+    // 2) Gọi mạng (ổn định + retry) để cập nhật
+    try {
+      setLoading(true);
+      const fresh = await fetchAuctionsFromChain({ retries: 5, delayMs: 1200 });
+      setAuctions(fresh);
+      // Nếu đang ở trang > tổng, kéo về cuối cùng để tránh trắng
+      const nextTotal = Math.max(1, Math.ceil(fresh.length / pageSize));
+      setPage((p) => Math.min(p, nextTotal));
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
-    // 1) Render cache ngay (nếu có) → tránh trắng trang
-    try {
-      const cached = (window as any)?.localStorage
-        ? (JSON.parse(localStorage.getItem("fhe.cached.auctions.v1") || "[]") as OnchainAuction[])
-        : [];
-      if (cached.length) setAuctions(cached.sort((a, b) => a.endTimeMs - b.endTimeMs));
-    } catch {}
-    // 2) Fetch thật + interval
-    loadFresh();
-    const id = setInterval(loadFresh, 30_000);
+    load();
+    // auto refresh mỗi 20s
+    const id = setInterval(() => load(), 20000);
     return () => clearInterval(id);
   }, []);
-
-
-  // ===== optimistic + sync khi vừa tạo xong =====
-  async function onCreatedOptimistic(created: {
-    address: string;
-    endTime: number; // seconds
-    item: string;
-    title: string;
-    imageUrl: string;
-    description?: string;
-  }) {
-    // 1) Đẩy vào UI ngay
-    const optimistic: OnchainAuction = {
-      address: created.address,
-      item: created.item,
-      endTimeMs: created.endTime * 1000,
-      title: created.title || created.item,
-      imageUrl: created.imageUrl,
-      description: created.description,
-    };
-    setAuctions((prev) => {
-      // tránh trùng nếu lỡ có
-      const exist = prev.find((x) => x.address.toLowerCase() === created.address.toLowerCase());
-      const merged = exist ? prev : [optimistic, ...prev];
-      return merged.sort((a, b) => a.endTimeMs - b.endTimeMs);
-    });
-    setPage(0); // luôn bật về trang đầu để thấy auction mới
-
-    // 2) Đồng bộ lại với on-chain (thử 5 lần, mỗi lần cách 1.2s)
-    for (let i = 0; i < 5; i++) {
-      await new Promise((r) => setTimeout(r, 1200));
-      try {
-        const list = await fetchAuctionsFromChain();
-        const found = list.find(
-          (x) => x.address.toLowerCase() === created.address.toLowerCase()
-        );
-        if (found) {
-          setAuctions(list.sort((a, b) => a.endTimeMs - b.endTimeMs));
-          break;
-        }
-      } catch {
-        // bỏ qua, thử lần sau
-      }
-    }
-  }
 
   return (
     <main className="min-h-screen bg-[radial-gradient(60%_60%_at_50%_0%,rgba(120,119,198,0.15)_0,transparent_60%),linear-gradient(to_bottom,rgba(10,10,10,1),rgba(0,0,0,1))] text-white">
@@ -97,44 +63,43 @@ export default function HomePage() {
 
       <div className="mx-auto max-w-7xl px-6 pb-24 space-y-10">
         {/* Create */}
-        <CreateAuctionForm onCreated={onCreatedOptimistic} />
+        <CreateAuctionForm onCreated={() => load(true)} />
 
         {/* Marketplace */}
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold">Marketplace</h2>
-
-            {/* Controls phân trang */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 text-sm text-white/70">
               <button
-                className="px-3 py-1 rounded-md border border-white/15 bg-white/5 hover:bg-white/10 disabled:opacity-40"
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-                disabled={page === 0}
+                className="px-3 py-1 rounded border border-white/15 hover:bg-white/5 disabled:opacity-40"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
               >
                 ← Prev
               </button>
-              <span className="text-sm text-white/70">
-                Page {page + 1} / {totalPages}
+              <span>
+                Page {page} / {totalPages}
               </span>
               <button
-                className="px-3 py-1 rounded-md border border-white/15 bg-white/5 hover:bg-white/10 disabled:opacity-40"
-                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                disabled={page >= totalPages - 1}
+                className="px-3 py-1 rounded border border-white/15 hover:bg:white/5 hover:bg-white/5 disabled:opacity-40"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
               >
                 Next →
               </button>
             </div>
           </div>
 
-          {auctions.length === 0 ? (
+          {visible.length === 0 ? (
             <p className="text-sm text-white/60">
-              No auctions yet. Create one above to get started.
+              {loading
+                ? "Loading auctions…"
+                : "No auctions yet. Create one above to get started."}
             </p>
           ) : (
-            // 4 cột x 3 hàng (12 item)
             <div className="grid gap-7 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {visible.map((a) => (
-                <AuctionCard key={a.address} auction={a} onBid={load} />
+                <AuctionCard key={a.address} auction={a} onBid={() => load()} />
               ))}
             </div>
           )}
