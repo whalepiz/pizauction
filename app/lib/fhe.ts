@@ -18,14 +18,12 @@ export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL!;
 const ABI: any = (auctionArtifact as any).abi ?? auctionArtifact;
 
 /** ==== Helpers mã hoá demo (bytes placeholder) ==== */
-/** Chuyển Uint8Array -> 0x...hex */
 function toHex(u8: Uint8Array): string {
   let out = "0x";
   for (let i = 0; i < u8.length; i++) out += u8[i].toString(16).padStart(2, "0");
   return out;
 }
 
-/** “Mã hoá” demo: scale số ETH rồi đóng gói 4 byte (placeholder) */
 export function encryptBidBytes(amountEth: string): string {
   const scaled = Math.floor(Number(amountEth) * 1e6); // 6 chữ số thập phân
   const u8 = new Uint8Array(4);
@@ -55,7 +53,6 @@ export async function getAuctionContract() {
   return new Contract(CONTRACT_ADDRESS, ABI, signer);
 }
 
-/** Submit bid: bytes “mã hoá” gửi on-chain */
 export async function placeEncryptedBid(amountEth: string) {
   const contract = await getAuctionContract();
   const enc = encryptBidBytes(amountEth);
@@ -64,13 +61,11 @@ export async function placeEncryptedBid(amountEth: string) {
 }
 
 /** ==== Đọc lịch sử thật từ on-chain qua event BidSubmitted ==== */
-/** Trả về mảng: { user, amount: "(encrypted)", timeMs } mới nhất trước */
 export async function fetchBidHistory(fromBlock?: number, toBlock?: number) {
   if (!RPC_URL) throw new Error("Missing NEXT_PUBLIC_RPC_URL");
   const provider = new JsonRpcProvider(RPC_URL);
 
   const iface = new Interface(ABI);
-  // Trong ethers v6, getEvent có thể trả null -> cần check
   const fragment = iface.getEvent("BidSubmitted(address,bytes,uint256)");
   if (!fragment) {
     throw new Error("ABI missing event: BidSubmitted(address,bytes,uint256)");
@@ -89,14 +84,17 @@ export async function fetchBidHistory(fromBlock?: number, toBlock?: number) {
   return logs
     .map((l) => {
       const parsed = iface.parseLog(l);
-      const bidder: string = parsed.args[0];       // address
-      // const enc: string = parsed.args[1];       // bytes (encryptedAmount)
-      const timestamp: bigint = parsed.args[2];    // uint256
+      if (!parsed) {
+        return null;
+      }
+      const bidder: string = parsed.args[0];
+      const timestamp: bigint = parsed.args[2];
       return {
         user: bidder,
         amount: "(encrypted)",
         timeMs: Number(timestamp) * 1000,
       };
     })
+    .filter((x): x is { user: string; amount: string; timeMs: number } => x !== null)
     .sort((a, b) => b.timeMs - a.timeMs);
 }
