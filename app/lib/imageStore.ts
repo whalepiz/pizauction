@@ -1,27 +1,34 @@
 "use client";
 
-const KEY = "fhe.images.v1";
+type Meta = { title?: string; imageUrl?: string; description?: string };
 
-type Dict = Record<string, string>; // { auctionAddr: imageUrl }
+const KEY = "fhe.market.meta.v1";
 
-function read(): Dict {
+function readAll(): Record<string, Meta> {
   if (typeof window === "undefined") return {};
-  const raw = localStorage.getItem(KEY);
-  return raw ? (JSON.parse(raw) as Dict) : {};
+  try {
+    const raw = localStorage.getItem(KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
 }
 
-function write(d: Dict) {
+function writeAll(obj: Record<string, Meta>) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(KEY, JSON.stringify(d));
+  localStorage.setItem(KEY, JSON.stringify(obj));
 }
 
-export function saveAuctionImage(addr: string, url: string) {
-  const d = read();
-  d[addr.toLowerCase()] = url;
-  write(d);
+export function saveAuctionMeta(
+  address: string,
+  meta: Meta
+) {
+  const all = readAll();
+  all[address.toLowerCase()] = { ...(all[address.toLowerCase()] || {}), ...meta };
+  writeAll(all);
 }
 
-export function getAuctionImage(addr: string): string | undefined {
-  const d = read();
-  return d[addr.toLowerCase()];
+export function getAuctionMeta(address: string): Meta | undefined {
+  const all = readAll();
+  return all[address.toLowerCase()];
 }

@@ -1,3 +1,6 @@
+Tôi đang sửa đến phần này  
+5) app/page.tsx (thay phần “Marketplace grid” để dùng AuctionCard)
+đây là code cũ bạn thay cho tôi : 
 "use client";
 
 import { useEffect, useState } from "react";
