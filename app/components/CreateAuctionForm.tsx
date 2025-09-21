@@ -1,58 +1,115 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import Image from "next/image";
 import { createAuctionOnChain } from "@/lib/fhe";
+import { toast } from "sonner";
 
-export default function CreateAuctionForm({ onCreated }: { onCreated: () => void }) {
+export default function CreateAuctionForm({
+  onCreated,
+}: {
+  onCreated?: () => void;
+}) {
   const [title, setTitle] = useState("");
   const [img, setImg] = useState("https://picsum.photos/seed/new/800/800");
   const [desc, setDesc] = useState("");
   const [hours, setHours] = useState<number>(6);
-  const [pending, setPending] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!title || !hours || hours <= 0) return;
+  const canCreate = useMemo(
+    () => title.trim().length > 0 && hours > 0,
+    [title, hours]
+  );
+
+  async function submit() {
+    if (!canCreate || loading) return;
     try {
-      setPending(true);
-      await createAuctionOnChain(title, hours, img, desc);
+      setLoading(true);
+      const created = await createAuctionOnChain(title.trim(), hours, img);
+      toast.success("Auction created", {
+        description: `${created.item} @ ${created.address.slice(0, 10)}…`,
+        action: {
+          label: "Etherscan",
+          onClick: () =>
+            window.open(
+              `https://sepolia.etherscan.io/address/${created.address}`,
+              "_blank"
+            ),
+        },
+      });
       setTitle("");
       setDesc("");
-      setImg("https://picsum.photos/seed/new/800/800");
       setHours(6);
-      onCreated();
-      alert("✅ Auction created!");
+      onCreated?.();
     } catch (e: any) {
-      console.error(e);
-      alert(e?.message || "Create failed");
+      toast.error(e?.shortMessage || e?.message || "Create failed");
     } finally {
-      setPending(false);
+      setLoading(false);
     }
   }
 
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 md:grid-cols-[1fr_360px]">
-      <div className="space-y-3">
-        <Input placeholder="NFT title" value={title} onChange={(e) => setTitle(e.target.value)} />
-        <Input placeholder="Image URL (https://…)" value={img} onChange={(e) => setImg(e.target.value)} />
-        <Textarea placeholder="Description (optional)" value={desc} onChange={(e) => setDesc(e.target.value)} />
-        <div className="flex items-center gap-3">
-          <Input type="number" min="1" step="1" value={hours} onChange={(e) => setHours(Number(e.target.value))} className="w-24" />
-          <span className="text-sm text-white/70">hours</span>
-        </div>
-        <Button type="submit" disabled={pending || !title || !hours} className="w-full md:w-auto">
-          {pending ? "Creating…" : "Create Auction"}
-        </Button>
-        <p className="text-xs text-white/50">Bids are encrypted on client. On-chain contract remains the same (global bids) in this v1.</p>
-      </div>
+    <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5 shadow-lg">
+      <div className="grid gap-5 md:grid-cols-[1fr_320px]">
+        <div className="space-y-3">
+          <Input
+            placeholder="NFT title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            className="bg-black/30"
+          />
+          <Input
+            placeholder="Image URL (https://...)"
+            value={img}
+            onChange={(e) => setImg(e.target.value)}
+            className="bg-black/30"
+          />
+          <Textarea
+            placeholder="Description (optional)"
+            value={desc}
+            onChange={(e) => setDesc(e.target.value)}
+            className="bg-black/30"
+          />
+          <div className="flex items-center gap-3">
+            <Input
+              type="number"
+              min="1"
+              step="1"
+              value={hours}
+              onChange={(e) => setHours(Number(e.target.value || 0))}
+              className="w-28 bg-black/30"
+            />
+            <span className="text-sm text-white/60">hours</span>
+          </div>
 
-      <div className="hidden md:block rounded-lg overflow-hidden border border-white/10">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={img} alt="preview" className="h-full w-full object-cover" />
+          <div className="pt-2">
+            <Button
+              onClick={submit}
+              disabled={!canCreate || loading}
+              className="w-full bg-gradient-to-r from-fuchsia-600 to-cyan-500 hover:opacity-90"
+            >
+              {loading ? "Creating…" : "Create Auction"}
+            </Button>
+            <p className="mt-2 text-xs text-white/50">
+              Bids are encrypted on client. On-chain contract remains the same
+              (global bids) in this v1.
+            </p>
+          </div>
+        </div>
+
+        <div className="relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-zinc-800 to-black">
+          {/* preview image */}
+          <Image
+            src={img || "https://picsum.photos/seed/placeholder/800/800"}
+            alt="Preview"
+            fill
+            className="object-cover"
+          />
+        </div>
       </div>
-    </form>
+    </section>
   );
 }
