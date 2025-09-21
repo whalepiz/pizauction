@@ -1,6 +1,14 @@
 "use client";
 
-import { v4 as uuid } from "uuid";
+// Dùng crypto.randomUUID() thay cho 'uuid' để khỏi cài thêm package
+function genId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    // @ts-expect-error runtime check
+    return crypto.randomUUID() as string;
+  }
+  // Fallback nếu môi trường không có crypto.randomUUID
+  return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
 
 export type Auction = {
   id: string;
@@ -36,7 +44,7 @@ export function seedIfEmpty(defaultContract: string) {
 
   const samples: Auction[] = [
     {
-      id: uuid(),
+      id: genId(),
       title: "Neon Samurai #01",
       imageUrl: "https://picsum.photos/seed/fhe-auction-1/800/800",
       endTimeMs: hours(6),
@@ -44,7 +52,7 @@ export function seedIfEmpty(defaultContract: string) {
       createdAt: now,
     },
     {
-      id: uuid(),
+      id: genId(),
       title: "Cyber Cat #77",
       imageUrl: "https://picsum.photos/seed/fhe-auction-2/800/800",
       endTimeMs: hours(7),
@@ -52,7 +60,7 @@ export function seedIfEmpty(defaultContract: string) {
       createdAt: now,
     },
     {
-      id: uuid(),
+      id: genId(),
       title: "Matrix Glitch #5",
       imageUrl: "https://picsum.photos/seed/fhe-auction-3/800/800",
       endTimeMs: hours(8),
@@ -60,7 +68,7 @@ export function seedIfEmpty(defaultContract: string) {
       createdAt: now,
     },
     {
-      id: uuid(),
+      id: genId(),
       title: "Synth Wave #12",
       imageUrl: "https://picsum.photos/seed/fhe-auction-4/800/800",
       endTimeMs: hours(9),
@@ -68,7 +76,7 @@ export function seedIfEmpty(defaultContract: string) {
       createdAt: now,
     },
     {
-      id: uuid(),
+      id: genId(),
       title: "Pixel Hero #9",
       imageUrl: "https://picsum.photos/seed/fhe-auction-5/800/800",
       endTimeMs: hours(10),
@@ -90,9 +98,8 @@ export function getAuction(id: string): Auction | undefined {
 
 export function createAuction(input: Omit<Auction, "id" | "createdAt">) {
   const list = readAll();
-  const item: Auction = { ...input, id: uuid(), createdAt: Date.now() };
+  const item: Auction = { ...input, id: genId(), createdAt: Date.now() };
   list.push(item);
   writeAll(list);
   return item;
 }
-
