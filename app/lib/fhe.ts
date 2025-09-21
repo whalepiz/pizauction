@@ -155,6 +155,7 @@ export async function bidOnAuction(addr: string, amountEth: string) {
  *  Nếu không truyền address, dùng NEXT_PUBLIC_AUCTION_ADDRESS.
  *  Tự giảm phạm vi quét (mặc định 20k blocks gần nhất) để tránh timeout RPC.
  */
+ /** ==== Bid history (per contract OR default env) ==== */
 export async function fetchBidHistory(
   fromBlock?: number,
   toBlock?: number,
@@ -172,7 +173,7 @@ export async function fetchBidHistory(
 
   const latest = await provider.getBlockNumber();
   const to = toBlock ?? latest;
-  const from = fromBlock ?? Math.max(0, to - 20_000); // quét 20k blocks gần nhất
+  const from = fromBlock ?? Math.max(0, to - 20_000); // quét 20k block gần nhất
 
   const logs: Log[] = await provider.getLogs({
     address: target,
@@ -185,6 +186,7 @@ export async function fetchBidHistory(
     .map((l) => {
       try {
         const parsed = iface.parseLog(l as any);
+        if (!parsed) return null; // 👈 fix thêm check null
         const bidder: string = parsed.args[0];
         const ts: number = Number(parsed.args[2]);
         return { user: bidder, amount: "(encrypted)", timeMs: ts * 1000 };
