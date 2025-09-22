@@ -11,21 +11,13 @@ import { toast } from "sonner";
 export default function CreateAuctionForm({
   onCreated,
 }: {
-  onCreated?: (created: {
-    address: string;
-    endTime: number;
-    item: string;
-    title: string;
-    imageUrl: string;
-    description?: string;
-  }) => void;
+  onCreated?: () => void;
 }) {
   const [title, setTitle] = useState("");
   const [img, setImg] = useState("https://picsum.photos/seed/new/800/800");
   const [desc, setDesc] = useState("");
   const [hours, setHours] = useState<number>(6);
   const [loading, setLoading] = useState(false);
-  const [imgFailed, setImgFailed] = useState(false);
 
   const canCreate = useMemo(
     () => title.trim().length > 0 && hours > 0,
@@ -36,19 +28,7 @@ export default function CreateAuctionForm({
     if (!canCreate || loading) return;
     try {
       setLoading(true);
-
       const created = await createAuctionOnChain(title.trim(), hours, img, desc);
-
-      // gọi lên page để optimistic render
-      onCreated?.({
-        address: created.address,
-        endTime: created.endTime,
-        item: created.item,
-        title: title.trim(),
-        imageUrl: img,
-        description: desc || undefined,
-      });
-
       toast.success("Auction created", {
         description: `${created.item} @ ${created.address.slice(0, 10)}…`,
         action: {
@@ -60,11 +40,10 @@ export default function CreateAuctionForm({
             ),
         },
       });
-
-      // reset form
       setTitle("");
       setDesc("");
       setHours(6);
+      onCreated?.();
     } catch (e: any) {
       toast.error(e?.shortMessage || e?.message || "Create failed");
     } finally {
@@ -83,12 +62,9 @@ export default function CreateAuctionForm({
             className="bg-black/30"
           />
           <Input
-            placeholder="Image URL (https://…)"
+            placeholder="Image URL (https://...)"
             value={img}
-            onChange={(e) => {
-              setImg(e.target.value);
-              setImgFailed(false);
-            }}
+            onChange={(e) => setImg(e.target.value)}
             className="bg-black/30"
           />
           <Textarea
@@ -118,39 +94,18 @@ export default function CreateAuctionForm({
               {loading ? "Creating…" : "Create Auction"}
             </Button>
             <p className="mt-2 text-xs text-white/50">
-              Bids are encrypted on client. On-chain contract remains the same
-              (global bids) in this v1.
+              Metadata (title, image, description) is stored on-chain via MetadataRegistry.
             </p>
           </div>
         </div>
 
         <div className="relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-zinc-800 to-black">
           <Image
-            src={!imgFailed ? img : "https://picsum.photos/seed/placeholder/800/800"}
+            src={img || "https://picsum.photos/seed/placeholder/800/800"}
             alt="Preview"
             fill
-            onError={() => setImgFailed(true)}
             className="object-cover"
           />
-          <div className="absolute top-2 right-2 text-[11px] rounded bg-black/60 px-2 py-1">
-            Preview
-          </div>
-          {imgFailed && (
-            <div className="absolute top-2 left-2 text-[11px] rounded bg-rose-700/80 px-2 py-1">
-              Image failed — showing placeholder
-            </div>
-          )}
-          <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 via-black/20 to-transparent">
-            <div className="text-sm font-semibold truncate">
-              {title || "Untitled NFT"}
-            </div>
-            <div className="text-[11px] text-white/70">{hours}h duration</div>
-            {desc ? (
-              <div className="mt-1 text-[11px] text-white/60 line-clamp-2">
-                {desc}
-              </div>
-            ) : null}
-          </div>
         </div>
       </div>
     </section>

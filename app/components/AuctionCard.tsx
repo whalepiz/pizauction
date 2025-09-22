@@ -1,15 +1,10 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  bidOnAuction,
-  finalizeAuction,
-  readEnded,
-  readWinner,
-} from "@/lib/fhe";
+import { bidOnAuction, finalizeAuction, getWinner, WinnerInfo } from "@/lib/fhe";
 import { toast } from "sonner";
 
 type Props = {
@@ -28,38 +23,25 @@ export default function AuctionCard({ auction, onBid }: Props) {
   const [amt, setAmt] = useState("");
   const [loading, setLoading] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
-  const [ended, setEnded] = useState(false);
-  const [winner, setWinner] = useState<string>("");
+  const [winner, setWinner] = useState<WinnerInfo | null>(null);
+  const [finalizing, setFinalizing] = useState(false);
 
   const leftMs = Math.max(0, auction.endTimeMs - Date.now());
-  const left = useMemo(() => leftMs, [auction.endTimeMs, leftMs]);
-  const hh = Math.floor(left / 3600000);
-  const mm = Math.floor((left % 3600000) / 60000);
-  const ss = Math.floor((left % 60000) / 1000);
-
-  // Poll trạng thái ended/winner (nhanh & nhẹ)
-  async function refreshStatus() {
-    try {
-      const isEnded = await readEnded(auction.address);
-      setEnded(isEnded);
-      if (isEnded) {
-        const w = await readWinner(auction.address);
-        setWinner(w && w !== "0x0000000000000000000000000000000000000000" ? w : "");
-      } else {
-        setWinner("");
-      }
-    } catch {
-      // ignore
-    }
-  }
+  const hh = Math.floor(leftMs / 3600000);
+  const mm = Math.floor((leftMs % 3600000) / 60000);
+  const ss = Math.floor((leftMs % 60000) / 1000);
+  const closed = leftMs === 0;
 
   useEffect(() => {
-    refreshStatus();
-    const t = setInterval(refreshStatus, 15_000);
-    return () => clearInterval(t);
+    let mounted = true;
+    (async () => {
+      const w = await getWinner(auction.address);
+      if (mounted) setWinner(w);
+    })();
+    return () => { mounted = false; };
   }, [auction.address]);
 
-  async function submit() {
+  async function submitBid() {
     if (!amt || loading) return;
     try {
       setLoading(true);
@@ -69,8 +51,6 @@ export default function AuctionCard({ auction, onBid }: Props) {
       });
       setAmt("");
       onBid?.();
-      // sau khi bid thì refresh trạng thái
-      refreshStatus();
     } catch (e: any) {
       toast.error(e?.shortMessage || e?.message || "Bid failed");
     } finally {
@@ -79,26 +59,27 @@ export default function AuctionCard({ auction, onBid }: Props) {
   }
 
   async function onFinalize() {
-    if (loading) return;
     try {
-      setLoading(true);
+      setFinalizing(true);
       await finalizeAuction(auction.address);
-      toast.success("Auction finalized");
-      await refreshStatus();
-      onBid?.();
+      const w = await getWinner(auction.address);
+      setWinner(w);
+      toast.success("Auction finalized", {
+        description: w?.winner
+          ? `Winner: ${w.winner.slice(0, 6)}…${w.winner.slice(-4)}`
+          : "No valid bids",
+      });
     } catch (e: any) {
       toast.error(e?.shortMessage || e?.message || "Finalize failed");
     } finally {
-      setLoading(false);
+      setFinalizing(false);
     }
   }
 
   const imgSrc =
     !imgFailed && auction.imageUrl
       ? auction.imageUrl
-      : "https://picsum.photos/seed/placeholder/600/600";
-
-  const nowPastEnd = Date.now() >= auction.endTimeMs;
+      : "https://picsum.photos/seed/placeholder/800/800";
 
   return (
     <div className="rounded-2xl border border-white/10 bg-zinc-900/40 p-3 shadow-lg hover:border-white/20 transition">
@@ -111,7 +92,7 @@ export default function AuctionCard({ auction, onBid }: Props) {
           className="object-cover"
           sizes="(max-width:768px) 100vw, 25vw"
         />
-        {/* overlay bottom */}
+
         <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/80 via-black/20 to-transparent">
           <div className="text-sm font-semibold truncate">
             {auction.title || auction.item}
@@ -121,54 +102,47 @@ export default function AuctionCard({ auction, onBid }: Props) {
               {auction.description}
             </div>
           ) : null}
-
-          {ended ? (
-            <div className="mt-1 text-[11px] text-emerald-300">
-              Ended • Winner:{" "}
-              {winner
-                ? `${winner.slice(0, 6)}…${winner.slice(-4)}`
-                : "(no winner)"}
+          {!winner ? (
+            <div className="mt-1 text-[11px] text-emerald-300/90">
+              {closed ? "Closed" : <>Ends in {hh}h {mm}m {ss}s</>}
             </div>
           ) : (
-            <div className="mt-1 text-[11px] text-emerald-300/90">
-              Ends in {hh}h {mm}m {ss}s
+            <div className="mt-1 text-[11px] text-amber-300">
+              Winner: {winner.winner.slice(0,6)}…{winner.winner.slice(-4)}
             </div>
           )}
         </div>
       </div>
 
-      {/* Bid / Finalize action row */}
-      {!ended ? (
-        <div className="mt-3 flex gap-2">
-          <Input
-            placeholder="Amount (ETH)"
-            value={amt}
-            onChange={(e) => setAmt(e.target.value)}
-            className="bg-black/30"
-          />
-          <Button onClick={submit} disabled={!amt || loading || nowPastEnd}>
-            {loading ? "Bidding…" : nowPastEnd ? "Closed" : "Bid"}
-          </Button>
-        </div>
+      {!winner ? (
+        <>
+          <div className="mt-3 flex gap-2">
+            <Input
+              placeholder="Amount (ETH)"
+              value={amt}
+              onChange={(e) => setAmt(e.target.value)}
+              className="bg-black/30"
+            />
+            <Button onClick={submitBid} disabled={!amt || loading || closed}>
+              {loading ? "Bidding…" : "Bid"}
+            </Button>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={onFinalize}
+              disabled={!closed || finalizing}
+              className="w-full"
+            >
+              {finalizing ? "Finalizing…" : "Finalize"}
+            </Button>
+          </div>
+        </>
       ) : (
-        <div className="mt-3">
-          <Button disabled className="w-full opacity-70">Closed</Button>
+        <div className="mt-3 text-sm text-white/70">
+          Finalized at: {new Date(winner.timestamp * 1000).toLocaleString()}
         </div>
       )}
-
-      {/* Hiện nút Finalize khi quá hạn nhưng chưa ended */}
-      {nowPastEnd && !ended ? (
-        <div className="mt-2">
-          <Button
-            variant="outline"
-            onClick={onFinalize}
-            disabled={loading}
-            className="w-full"
-          >
-            {loading ? "Finalizing…" : "Finalize"}
-          </Button>
-        </div>
-      ) : null}
 
       <div className="mt-1 text-[11px] text-white/40">
         {auction.address.slice(0, 6)}…{auction.address.slice(-4)}
