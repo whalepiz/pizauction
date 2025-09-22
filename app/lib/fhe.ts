@@ -8,7 +8,13 @@ import {
 } from "ethers";
 import factoryArtifact from "@/abis/AuctionFactory.json";
 import auctionArtifact from "@/abis/FHEAuction.json";
-import { saveAuctionMeta, getAuctionMeta, getAuctionImage } from "./imageStore";
+import {
+  saveAuctionMeta,
+  getAuctionMeta,
+  getAuctionImage,
+  readMetaOnchain,
+  type AuctionMeta,
+} from "./imageStore";
 
 /** ==== ENV ==== */
 export const FACTORY_ADDRESS = process.env.NEXT_PUBLIC_FACTORY_ADDRESS!;
@@ -30,7 +36,6 @@ export async function ensureWallet(chainId = CHAIN_ID) {
   }
   return provider;
 }
-// alias cho nút Connect
 export const connectWallet = ensureWallet;
 
 /** ==== Read provider ==== */
@@ -105,7 +110,7 @@ export async function createAuctionOnChain(
 
   if (!created.address) throw new Error("Create failed: no event parsed");
 
-  // lưu metadata cục bộ (đồng bộ ảnh giữa mọi máy nhờ cùng địa chỉ + cùng URL bạn nhập)
+  // Ghi meta: local ngay + on-chain (imageStore sẽ tự gọi on-chain nếu config có contract)
   saveAuctionMeta(created.address, { title, imageUrl, description });
 
   return created;
@@ -136,10 +141,10 @@ export async function bidOnAuction(addr: string, amountEth: string) {
   return tx.wait();
 }
 
-/** ==== Finalize & Winner (NEW) ==== */
+/** ==== Finalize & Winner ==== */
 export async function finalizeAuction(addr: string) {
   const c = await getAuctionWithSigner(addr);
-  const tx = await c.finalize(); // gọi đúng hàm finalize() trong contract mới
+  const tx = await c.finalize();
   return tx.wait();
 }
 export async function readEnded(addr: string): Promise<boolean> {
@@ -208,6 +213,7 @@ async function getReadProviderPreferWallet() {
 }
 
 // ==== Load auctions from chain (ổn định + retry + cache) ====
+// ĐÃ tích hợp đọc metadata on-chain trực tiếp để đồng bộ ảnh/tên/desc đa máy
 export async function fetchAuctionsFromChain(
   opts?: { retries?: number; delayMs?: number }
 ): Promise<OnchainAuction[]> {
@@ -221,22 +227,33 @@ export async function fetchAuctionsFromChain(
 
       const addrs: string[] = await factoryRead.getAllAuctions();
 
-      // Đọc song song, chống lỗi mạng bằng allSettled
       const settled = await Promise.allSettled(
         addrs.map(async (addr) => {
           const c = new Contract(addr, AUCTION_ABI, provider);
-          const [item, end] = await Promise.all([c.item(), c.endTime()]);
-          // Ưu tiên metadata đã lưu; fallback ảnh từ getAuctionImage(addr)
-          const meta = getAuctionMeta(addr) || {};
-          const img = meta.imageUrl || (getAuctionImage ? getAuctionImage(addr) : undefined);
+          const [item, end, metaOn] = await Promise.all([
+            c.item(),
+            c.endTime(),
+            // đọc metadata on-chain (nếu có contract); đồng thời cache local
+            readMetaOnchain(addr).catch(() => null),
+          ]);
+
+          // merge thứ tự ưu tiên: on-chain > local cache > fallback
+          const local: AuctionMeta | undefined = getAuctionMeta(addr);
+          const title =
+            (metaOn?.title || local?.title || String(item)) as string;
+          const imageUrl =
+            (metaOn?.imageUrl || local?.imageUrl || getAuctionImage(addr)) ||
+            undefined;
+          const description =
+            (metaOn?.description || local?.description) || undefined;
 
           return {
             address: addr,
             item: String(item),
             endTimeMs: Number(end) * 1000,
-            title: meta.title || String(item),
-            imageUrl: img,
-            description: meta.description,
+            title,
+            imageUrl,
+            description,
           } as OnchainAuction;
         })
       );
@@ -246,11 +263,8 @@ export async function fetchAuctionsFromChain(
         .map((s) => s.value)
         .sort((a, b) => a.endTimeMs - b.endTimeMs);
 
-      if (ok.length > 0 || addrs.length === 0) {
-        writeAuctionsCache(ok);
-        return ok;
-      }
-      // Nếu empty (RPC vừa chưa index) → retry
+      writeAuctionsCache(ok);
+      return ok;
     } catch {
       // ignore & retry
     }
