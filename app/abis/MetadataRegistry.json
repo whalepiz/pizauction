@@ -1,0 +1,29 @@
+{
+  "abi": [
+    {
+      "inputs": [
+        { "internalType": "address", "name": "auction", "type": "address" },
+        { "internalType": "string", "name": "title", "type": "string" },
+        { "internalType": "string", "name": "imageUrl", "type": "string" },
+        { "internalType": "string", "name": "description", "type": "string" }
+      ],
+      "name": "saveMeta",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "address", "name": "auction", "type": "address" }
+      ],
+      "name": "getMeta",
+      "outputs": [
+        { "internalType": "string", "name": "title", "type": "string" },
+        { "internalType": "string", "name": "imageUrl", "type": "string" },
+        { "internalType": "string", "name": "description", "type": "string" }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ]
+}
