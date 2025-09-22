@@ -285,3 +285,11 @@ export async function fetchAuctionsFromChain(
 
   return readAuctionsCache();
 }
+// ---- legacy stub for old HistoryTable ----
+export async function fetchBidHistory(): Promise<
+  { user: string; amount: string; timeMs: number }[]
+> {
+  // V1: lịch sử reveal hiển thị theo từng card (fetchRevealHistory).
+  // Giữ stub trống này để HistoryTable không lỗi khi build.
+  return [];
+}
