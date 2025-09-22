@@ -6,24 +6,26 @@ import {
   Interface,
   JsonRpcProvider,
 } from "ethers";
-
-// ABIs
 import factoryArtifact from "@/abis/AuctionFactory.json";
 import auctionArtifact from "@/abis/FHEAuction.json";
-import metadataArtifact from "@/abis/MetadataRegistry.json";
+import {
+  saveAuctionMeta,
+  getAuctionMeta,
+  getAuctionImage,
+  readMetaOnchain,
+  type AuctionMeta,
+} from "./imageStore";
 
-// ===== ENV =====
+/** ==== ENV ==== */
 export const FACTORY_ADDRESS = process.env.NEXT_PUBLIC_FACTORY_ADDRESS!;
 export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111);
 export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL!;
-export const METADATA_ADDRESS = process.env.NEXT_PUBLIC_METADATA_ADDRESS!;
 
-// ===== ABIs =====
+/** ==== ABIs ==== */
 const FACTORY_ABI: any = (factoryArtifact as any).abi ?? factoryArtifact;
 const AUCTION_ABI: any = (auctionArtifact as any).abi ?? auctionArtifact;
-const METADATA_ABI: any = (metadataArtifact as any).abi ?? metadataArtifact;
 
-// ===== Wallet helpers =====
+/** ==== Wallet helpers ==== */
 export async function ensureWallet(chainId = CHAIN_ID) {
   if (!(window as any).ethereum) throw new Error("No wallet found");
   await (window as any).ethereum.request({ method: "eth_requestAccounts" });
@@ -34,14 +36,14 @@ export async function ensureWallet(chainId = CHAIN_ID) {
   }
   return provider;
 }
-export const connectWallet = ensureWallet; // alias
+export const connectWallet = ensureWallet;
 
-// ===== Read provider =====
+/** ==== Read provider ==== */
 function readProvider() {
   return new JsonRpcProvider(RPC_URL);
 }
 
-// ===== Contracts =====
+/** ==== Contracts ==== */
 export async function getFactoryWithSigner() {
   const provider = await ensureWallet();
   const signer = await provider.getSigner();
@@ -58,16 +60,8 @@ export async function getAuctionWithSigner(addr: string) {
 export function getAuctionRead(addr: string) {
   return new Contract(addr, AUCTION_ABI, readProvider());
 }
-export async function getMetadataWithSigner() {
-  const provider = await ensureWallet();
-  const signer = await provider.getSigner();
-  return new Contract(METADATA_ADDRESS, METADATA_ABI, signer);
-}
-export function getMetadataRead() {
-  return new Contract(METADATA_ADDRESS, METADATA_ABI, readProvider());
-}
 
-// ===== Encode “encrypted” bid (placeholder) =====
+/** ==== Encode “encrypted” bid (placeholder) ==== */
 function toHex(u8: Uint8Array): string {
   let out = "0x";
   for (let i = 0; i < u8.length; i++) out += u8[i].toString(16).padStart(2, "0");
@@ -83,22 +77,7 @@ export function encodeBid(amountEth: string): string {
   return toHex(u8);
 }
 
-// ===== Types =====
-export type OnchainAuction = {
-  address: string;
-  item: string;
-  endTimeMs: number;
-  title?: string;
-  imageUrl?: string;
-  description?: string;
-};
-
-export type WinnerInfo = {
-  winner: string | null;
-  amount: string | null;
-};
-
-// ===== Create auction via Factory + ghi metadata on-chain =====
+/** ==== Create auction via Factory ==== */
 export async function createAuctionOnChain(
   title: string,
   durationHours: number,
@@ -131,25 +110,30 @@ export async function createAuctionOnChain(
 
   if (!created.address) throw new Error("Create failed: no event parsed");
 
-  // Ghi metadata on-chain (để mọi máy thấy như nhau)
-  try {
-    const registry = await getMetadataWithSigner();
-    const tx2 = await registry.setMeta(
-      created.address,
-      title,
-      imageUrl,
-      description || ""
-    );
-    await tx2.wait();
-  } catch (e) {
-    console.warn("setMeta failed:", e);
-  }
+  // Ghi meta: local ngay + on-chain (imageStore sẽ tự gọi on-chain nếu config có contract)
+  saveAuctionMeta(created.address, { title, imageUrl, description });
 
   return created;
 }
 
-/* ----------------  BID / FINALIZE / GET WINNER  ------------------- */
+/** ==== Types ==== */
+export type OnchainAuction = {
+  address: string;
+  item: string;
+  endTimeMs: number;
+  title?: string;
+  imageUrl?: string;
+  description?: string;
+};
 
+/** ==== (giữ cho HistoryTable compile an toàn) ==== */
+export async function fetchBidHistory(): Promise<
+  { user: string; amount: string; timeMs: number }[]
+> {
+  return []; // v1 hiển thị lịch sử theo-card; có thể nâng cấp sau
+}
+
+/** ==== Bid per-auction ==== */
 export async function bidOnAuction(addr: string, amountEth: string) {
   const c = await getAuctionWithSigner(addr);
   const enc = encodeBid(amountEth);
@@ -157,39 +141,28 @@ export async function bidOnAuction(addr: string, amountEth: string) {
   return tx.wait();
 }
 
+/** ==== Finalize & Winner ==== */
 export async function finalizeAuction(addr: string) {
   const c = await getAuctionWithSigner(addr);
   const tx = await c.finalize();
   return tx.wait();
 }
-
-export async function getWinner(addr: string): Promise<WinnerInfo> {
+export async function readEnded(addr: string): Promise<boolean> {
   const c = getAuctionRead(addr);
-  try {
-    const w = await (c as any).winner();
-    if (w && w !== "0x0000000000000000000000000000000000000000") {
-      let amount: string | null = "(encrypted)";
-      try {
-        const a = await (c as any).amountWinner?.();
-        if (a) amount = String(a);
-      } catch {}
-      return { winner: String(w), amount };
-    }
-  } catch {}
-
-  try {
-    const leader = await (c as any).leader?.();
-    if (leader && leader !== "0x0000000000000000000000000000000000000000") {
-      return { winner: String(leader), amount: "(encrypted)" };
-    }
-  } catch {}
-
-  return { winner: null, amount: null };
+  return Boolean(await c.ended());
+}
+export async function readWinner(addr: string): Promise<string> {
+  const c = getAuctionRead(addr);
+  return String(await c.winner());
 }
 
-/* ---------------  CACHE + ỔN ĐỊNH RPC FETCH  ---------------------- */
+/* ------------------------------------------------------------------ */
+/* --------------------  CACHE + STABLE FETCH  ---------------------- */
+/* ------------------------------------------------------------------ */
 
-const AUCTIONS_CACHE_KEY = "fhe.cached.auctions.v2";
+// ==== CACHE KEYS ====
+const AUCTIONS_CACHE_KEY = "fhe.cached.auctions.v1";
+
 type CachedAuction = {
   address: string;
   item: string;
@@ -199,17 +172,20 @@ type CachedAuction = {
   description?: string;
 };
 
+// Đọc cache nhanh để render trước
 export function readAuctionsCache(): OnchainAuction[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(AUCTIONS_CACHE_KEY);
     if (!raw) return [];
-    return JSON.parse(raw) as CachedAuction[];
+    const arr = JSON.parse(raw) as CachedAuction[];
+    return arr;
   } catch {
     return [];
   }
 }
 
+// Ghi cache sau khi fetch thành công
 function writeAuctionsCache(list: OnchainAuction[]) {
   if (typeof window === "undefined") return;
   const slim: CachedAuction[] = list.map((x) => ({
@@ -223,6 +199,7 @@ function writeAuctionsCache(list: OnchainAuction[]) {
   localStorage.setItem(AUCTIONS_CACHE_KEY, JSON.stringify(slim));
 }
 
+// Provider đọc: ưu tiên ví (nếu đã mở & đúng chain), fallback RPC_URL
 async function getReadProviderPreferWallet() {
   try {
     const eth = (window as any)?.ethereum;
@@ -231,36 +208,44 @@ async function getReadProviderPreferWallet() {
       const net = await bp.getNetwork();
       if (Number(net.chainId) === CHAIN_ID) return bp;
     }
-  } catch {}
+  } catch { /* ignore */ }
   return new JsonRpcProvider(RPC_URL);
 }
 
+// ==== Load auctions from chain (ổn định + retry + cache) ====
+// ĐÃ tích hợp đọc metadata on-chain trực tiếp để đồng bộ ảnh/tên/desc đa máy
 export async function fetchAuctionsFromChain(
   opts?: { retries?: number; delayMs?: number }
 ): Promise<OnchainAuction[]> {
   const retries = opts?.retries ?? 5;
-  const delayMs = opts?.delayMs ?? 1000;
+  const delayMs = opts?.delayMs ?? 1200;
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const provider = await getReadProviderPreferWallet();
       const factoryRead = new Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
-      const registryRead = new Contract(METADATA_ADDRESS, METADATA_ABI, provider);
 
       const addrs: string[] = await factoryRead.getAllAuctions();
 
       const settled = await Promise.allSettled(
         addrs.map(async (addr) => {
           const c = new Contract(addr, AUCTION_ABI, provider);
-          const [item, end, meta] = await Promise.all([
+          const [item, end, metaOn] = await Promise.all([
             c.item(),
             c.endTime(),
-            registryRead.getMeta(addr),
+            // đọc metadata on-chain (nếu có contract); đồng thời cache local
+            readMetaOnchain(addr).catch(() => null),
           ]);
 
-          const title = meta?.title?.length ? String(meta.title) : String(item);
-          const imageUrl = meta?.imageUrl?.length ? String(meta.imageUrl) : undefined;
-          const description = meta?.description?.length ? String(meta.description) : undefined;
+          // merge thứ tự ưu tiên: on-chain > local cache > fallback
+          const local: AuctionMeta | undefined = getAuctionMeta(addr);
+          const title =
+            (metaOn?.title || local?.title || String(item)) as string;
+          const imageUrl =
+            (metaOn?.imageUrl || local?.imageUrl || getAuctionImage(addr)) ||
+            undefined;
+          const description =
+            (metaOn?.description || local?.description) || undefined;
 
           return {
             address: addr,
@@ -278,19 +263,15 @@ export async function fetchAuctionsFromChain(
         .map((s) => s.value)
         .sort((a, b) => a.endTimeMs - b.endTimeMs);
 
-      if (ok.length > 0 || addrs.length === 0) {
-        writeAuctionsCache(ok);
-        return ok;
-      }
-    } catch {}
+      writeAuctionsCache(ok);
+      return ok;
+    } catch {
+      // ignore & retry
+    }
     await new Promise((r) => setTimeout(r, delayMs));
   }
-  return readAuctionsCache();
-}
 
-/* giữ để HistoryTable compile an toàn */
-export async function fetchBidHistory(): Promise<
-  { user: string; amount: string; timeMs: number }[]
-> {
-  return [];
+  // Hết retry → trả cache (nếu có), không trắng trang
+  const cached = readAuctionsCache();
+  return cached;
 }
