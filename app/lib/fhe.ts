@@ -110,7 +110,7 @@ export async function createAuctionOnChain(
 
   if (!created.address) throw new Error("Create failed: no event parsed");
 
-  // Ghi meta: local ngay + on-chain (imageStore sẽ tự gọi on-chain nếu config có contract)
+  // Ghi meta: local + on-chain (nếu có MetadataRegistry)
   saveAuctionMeta(created.address, { title, imageUrl, description });
 
   return created;
@@ -126,11 +126,11 @@ export type OnchainAuction = {
   description?: string;
 };
 
-/** ==== (giữ cho HistoryTable compile an toàn) ==== */
+/** ==== Bid History placeholder ==== */
 export async function fetchBidHistory(): Promise<
   { user: string; amount: string; timeMs: number }[]
 > {
-  return []; // v1 hiển thị lịch sử theo-card; có thể nâng cấp sau
+  return []; // giữ trống, có thể nâng cấp sau
 }
 
 /** ==== Bid per-auction ==== */
@@ -155,6 +155,8 @@ export async function readWinner(addr: string): Promise<string> {
   const c = getAuctionRead(addr);
   return String(await c.winner());
 }
+// alias để tránh lỗi import getWinner
+export const getWinner = readWinner;
 
 /* ------------------------------------------------------------------ */
 /* --------------------  CACHE + STABLE FETCH  ---------------------- */
@@ -178,8 +180,7 @@ export function readAuctionsCache(): OnchainAuction[] {
   try {
     const raw = localStorage.getItem(AUCTIONS_CACHE_KEY);
     if (!raw) return [];
-    const arr = JSON.parse(raw) as CachedAuction[];
-    return arr;
+    return JSON.parse(raw) as CachedAuction[];
   } catch {
     return [];
   }
@@ -199,7 +200,7 @@ function writeAuctionsCache(list: OnchainAuction[]) {
   localStorage.setItem(AUCTIONS_CACHE_KEY, JSON.stringify(slim));
 }
 
-// Provider đọc: ưu tiên ví (nếu đã mở & đúng chain), fallback RPC_URL
+// Provider đọc: ưu tiên ví (nếu đúng chain), fallback RPC_URL
 async function getReadProviderPreferWallet() {
   try {
     const eth = (window as any)?.ethereum;
@@ -208,12 +209,11 @@ async function getReadProviderPreferWallet() {
       const net = await bp.getNetwork();
       if (Number(net.chainId) === CHAIN_ID) return bp;
     }
-  } catch { /* ignore */ }
+  } catch {}
   return new JsonRpcProvider(RPC_URL);
 }
 
 // ==== Load auctions from chain (ổn định + retry + cache) ====
-// ĐÃ tích hợp đọc metadata on-chain trực tiếp để đồng bộ ảnh/tên/desc đa máy
 export async function fetchAuctionsFromChain(
   opts?: { retries?: number; delayMs?: number }
 ): Promise<OnchainAuction[]> {
@@ -233,19 +233,14 @@ export async function fetchAuctionsFromChain(
           const [item, end, metaOn] = await Promise.all([
             c.item(),
             c.endTime(),
-            // đọc metadata on-chain (nếu có contract); đồng thời cache local
             readMetaOnchain(addr).catch(() => null),
           ]);
 
-          // merge thứ tự ưu tiên: on-chain > local cache > fallback
           const local: AuctionMeta | undefined = getAuctionMeta(addr);
-          const title =
-            (metaOn?.title || local?.title || String(item)) as string;
+          const title = metaOn?.title || local?.title || String(item);
           const imageUrl =
-            (metaOn?.imageUrl || local?.imageUrl || getAuctionImage(addr)) ||
-            undefined;
-          const description =
-            (metaOn?.description || local?.description) || undefined;
+            metaOn?.imageUrl || local?.imageUrl || getAuctionImage(addr) || undefined;
+          const description = metaOn?.description || local?.description || undefined;
 
           return {
             address: addr,
@@ -265,13 +260,9 @@ export async function fetchAuctionsFromChain(
 
       writeAuctionsCache(ok);
       return ok;
-    } catch {
-      // ignore & retry
-    }
+    } catch {}
     await new Promise((r) => setTimeout(r, delayMs));
   }
 
-  // Hết retry → trả cache (nếu có), không trắng trang
-  const cached = readAuctionsCache();
-  return cached;
+  return readAuctionsCache();
 }
