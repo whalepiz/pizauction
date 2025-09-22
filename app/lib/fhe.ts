@@ -5,12 +5,11 @@ import {
   Contract,
   Interface,
   JsonRpcProvider,
-  Log,
 } from "ethers";
-
 import factoryArtifact from "@/abis/AuctionFactory.json";
 import auctionArtifact from "@/abis/FHEAuction.json";
 import metadataArtifact from "@/abis/MetadataRegistry.json";
+import { getAuctionImage } from "./imageStore";
 
 /** ==== ENV ==== */
 export const FACTORY_ADDRESS = process.env.NEXT_PUBLIC_FACTORY_ADDRESS!;
@@ -34,7 +33,6 @@ export async function ensureWallet(chainId = CHAIN_ID) {
   }
   return provider;
 }
-// alias cho nút Connect
 export const connectWallet = ensureWallet;
 
 /** ==== Read provider ==== */
@@ -59,20 +57,20 @@ export async function getAuctionWithSigner(addr: string) {
 export function getAuctionRead(addr: string) {
   return new Contract(addr, AUCTION_ABI, readProvider());
 }
-function getMetadataWithSigner() {
-  const provider = new BrowserProvider((window as any).ethereum);
-  return provider.getSigner().then(
-    (signer) => new Contract(METADATA_ADDRESS, METADATA_ABI, signer)
-  );
-}
-function getMetadataRead() {
+export function getMetadataRead() {
   return new Contract(METADATA_ADDRESS, METADATA_ABI, readProvider());
 }
+export async function getMetadataWithSigner() {
+  const provider = await ensureWallet();
+  const signer = await provider.getSigner();
+  return new Contract(METADATA_ADDRESS, METADATA_ABI, signer);
+}
 
-/** ==== Encode “encrypted” bid (placeholder) ==== */
+/** ==== Encode bid ==== */
 function toHex(u8: Uint8Array): string {
   let out = "0x";
-  for (let i = 0; i < u8.length; i++) out += u8[i].toString(16).padStart(2, "0");
+  for (let i = 0; i < u8.length; i++)
+    out += u8[i].toString(16).padStart(2, "0");
   return out;
 }
 export function encodeBid(amountEth: string): string {
@@ -85,7 +83,7 @@ export function encodeBid(amountEth: string): string {
   return toHex(u8);
 }
 
-/** ==== Create auction via Factory + LƯU METADATA ON-CHAIN ==== */
+/** ==== Create auction ==== */
 export async function createAuctionOnChain(
   title: string,
   durationHours: number,
@@ -97,7 +95,6 @@ export async function createAuctionOnChain(
   const tx = await factory.createAuction(title, seconds);
   const receipt = await tx.wait();
 
-  // Parse event AuctionCreated(address,string,uint256,address)
   const iface = new Interface(FACTORY_ABI);
   const evt = iface.getEvent("AuctionCreated(address,string,uint256,address)");
   const topic = evt!.topicHash;
@@ -106,23 +103,23 @@ export async function createAuctionOnChain(
   (receipt?.logs || []).forEach((l: any) => {
     try {
       if (l.topics?.[0] === topic) {
-        const parsed = iface.parseLog(l as Log);
-        if (parsed) {
-          created = {
-            address: String(parsed.args[0]),
-            item: String(parsed.args[1]),
-            endTime: Number(parsed.args[2]),
-          };
-        }
+        const parsed = iface.parseLog(l as any)!;
+        const args = (parsed as any).args;
+        created = {
+          address: String(args[0]),
+          item: String(args[1]),
+          endTime: Number(args[2]),
+        };
       }
     } catch {}
   });
 
   if (!created.address) throw new Error("Create failed: no event parsed");
 
-  // LƯU METADATA vào MetadataRegistry (để mọi máy nhìn thấy ảnh/desc giống nhau)
-  const metaC = await getMetadataWithSigner();
-  await (await metaC.saveMeta(created.address, title, imageUrl, description || "")).wait();
+  // lưu metadata on-chain
+  const meta = await getMetadataWithSigner();
+  await (await meta.setMeta(created.address, title, imageUrl, description || ""))
+    .wait();
 
   return created;
 }
@@ -137,12 +134,7 @@ export type OnchainAuction = {
   description?: string;
 };
 
-export type WinnerInfo = {
-  winner: string;
-  timestamp: number;
-};
-
-/** ==== Bid per-auction ==== */
+/** ==== Bid ==== */
 export async function bidOnAuction(addr: string, amountEth: string) {
   const c = await getAuctionWithSigner(addr);
   const enc = encodeBid(amountEth);
@@ -150,27 +142,23 @@ export async function bidOnAuction(addr: string, amountEth: string) {
   return tx.wait();
 }
 
-/** ==== Finalize & Winner ==== */
+/** ==== Finalize ==== */
 export async function finalizeAuction(addr: string) {
   const c = await getAuctionWithSigner(addr);
-  const tx = await c.finalize();
-  return tx.wait();
-}
-export async function getWinner(addr: string): Promise<WinnerInfo | null> {
-  const c = getAuctionRead(addr);
-  try {
-    const w: string = await c.winner();
-    const t: bigint = await c.winnerTimestamp();
-    if (w && w !== "0x0000000000000000000000000000000000000000") {
-      return { winner: w, timestamp: Number(t) };
-    }
-  } catch {
-    // nếu contract cũ chưa có winner(), trả null
-  }
-  return null;
+  return c.finalize();
 }
 
-/** ==== Lịch sử (v1: giữ stub để HistoryTable không lỗi) ==== */
+/** ==== Winner ==== */
+export async function getWinner(addr: string): Promise<string> {
+  const c = getAuctionRead(addr);
+  try {
+    return await c.winner();
+  } catch {
+    return "";
+  }
+}
+
+/** ==== Bid history ==== */
 export async function fetchBidHistory(): Promise<
   { user: string; amount: string; timeMs: number }[]
 > {
@@ -178,43 +166,101 @@ export async function fetchBidHistory(): Promise<
 }
 
 /* ------------------------------------------------------------------ */
-/* --------------------  FETCH AUCTIONS (from chain)  ---------------- */
+/* ---------------- CACHE + FETCH AUCTIONS -------------------------- */
 /* ------------------------------------------------------------------ */
-export async function fetchAuctionsFromChain(): Promise<OnchainAuction[]> {
-  const provider = readProvider();
-  const factory = new Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
-  const metaR = getMetadataRead();
 
-  const addrs: string[] = await factory.getAllAuctions();
+const AUCTIONS_CACHE_KEY = "fhe.cached.auctions.v1";
 
-  const list = await Promise.all(
-    addrs.map(async (addr) => {
-      const c = new Contract(addr, AUCTION_ABI, provider);
-      const item: string = await c.item();
-      const endTime: bigint = await c.endTime();
-      let title = item;
-      let imageUrl = "";
-      let description = "";
+type CachedAuction = {
+  address: string;
+  item: string;
+  endTimeMs: number;
+  title?: string;
+  imageUrl?: string;
+  description?: string;
+};
 
-      try {
-        const meta = await metaR.getMeta(addr);
-        title = meta.title || item;
-        imageUrl = meta.imageUrl || "";
-        description = meta.description || "";
-      } catch {
-        // nếu registry chưa có meta, dùng fallback
+// Đọc cache nhanh
+export function readAuctionsCache(): OnchainAuction[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(AUCTIONS_CACHE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as CachedAuction[];
+  } catch {
+    return [];
+  }
+}
+
+// Ghi cache
+function writeAuctionsCache(list: OnchainAuction[]) {
+  if (typeof window === "undefined") return;
+  const slim: CachedAuction[] = list.map((x) => ({
+    address: x.address,
+    item: x.item,
+    endTimeMs: x.endTimeMs,
+    title: x.title,
+    imageUrl: x.imageUrl,
+    description: x.description,
+  }));
+  localStorage.setItem(AUCTIONS_CACHE_KEY, JSON.stringify(slim));
+}
+
+async function getReadProviderPreferWallet() {
+  try {
+    const eth = (window as any)?.ethereum;
+    if (eth) {
+      const bp = new BrowserProvider(eth);
+      const net = await bp.getNetwork();
+      if (Number(net.chainId) === CHAIN_ID) return bp;
+    }
+  } catch {}
+  return new JsonRpcProvider(RPC_URL);
+}
+
+export async function fetchAuctionsFromChain(
+  opts?: { retries?: number; delayMs?: number }
+): Promise<OnchainAuction[]> {
+  const retries = opts?.retries ?? 5;
+  const delayMs = opts?.delayMs ?? 1200;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const provider = await getReadProviderPreferWallet();
+      const factoryRead = new Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
+      const addrs: string[] = await factoryRead.getAllAuctions();
+
+      const metaRead = getMetadataRead();
+
+      const settled = await Promise.allSettled(
+        addrs.map(async (addr) => {
+          const c = new Contract(addr, AUCTION_ABI, provider);
+          const [item, end] = await Promise.all([c.item(), c.endTime()]);
+          const meta = await metaRead.getMeta(addr);
+
+          return {
+            address: addr,
+            item: String(item),
+            endTimeMs: Number(end) * 1000,
+            title: meta[0] || String(item),
+            imageUrl: meta[1] || getAuctionImage(addr),
+            description: meta[2],
+          } as OnchainAuction;
+        })
+      );
+
+      const ok = settled
+        .filter((s): s is PromiseFulfilledResult<OnchainAuction> => s.status === "fulfilled")
+        .map((s) => s.value)
+        .sort((a, b) => a.endTimeMs - b.endTimeMs);
+
+      if (ok.length > 0 || addrs.length === 0) {
+        writeAuctionsCache(ok);
+        return ok;
       }
+    } catch {}
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
 
-      return {
-        address: addr,
-        item,
-        endTimeMs: Number(endTime) * 1000,
-        title,
-        imageUrl,
-        description,
-      };
-    })
-  );
-
-  return list.sort((a, b) => a.endTimeMs - b.endTimeMs);
+  return readAuctionsCache();
 }
