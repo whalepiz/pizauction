@@ -151,6 +151,14 @@ export async function bidOnAuction(addr: string, amountEth: string) {
   return tx.wait();
 }
 
+/** ==== Finalize auction ==== */
+export async function finalizeAuction(addr: string) {
+  const c = await getAuctionWithSigner(addr);
+  // gọi hàm finalize trong FHEAuction.sol
+  const tx = await c.finalize();
+  return tx.wait();
+}
+
 /** ==== Fetch metadata from on-chain registry ==== */
 export type AuctionMeta = {
   title?: string;
