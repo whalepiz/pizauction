@@ -7,20 +7,25 @@
         { "internalType": "string", "name": "imageUrl", "type": "string" },
         { "internalType": "string", "name": "description", "type": "string" }
       ],
-      "name": "saveMeta",
+      "name": "setMeta",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
     },
     {
-      "inputs": [
-        { "internalType": "address", "name": "auction", "type": "address" }
-      ],
+      "inputs": [{ "internalType": "address", "name": "auction", "type": "address" }],
       "name": "getMeta",
       "outputs": [
-        { "internalType": "string", "name": "title", "type": "string" },
-        { "internalType": "string", "name": "imageUrl", "type": "string" },
-        { "internalType": "string", "name": "description", "type": "string" }
+        {
+          "components": [
+            { "internalType": "string", "name": "title", "type": "string" },
+            { "internalType": "string", "name": "imageUrl", "type": "string" },
+            { "internalType": "string", "name": "description", "type": "string" }
+          ],
+          "internalType": "struct MetadataRegistry.Meta",
+          "name": "",
+          "type": "tuple"
+        }
       ],
       "stateMutability": "view",
       "type": "function"
