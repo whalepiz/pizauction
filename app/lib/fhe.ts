@@ -247,3 +247,103 @@ export async function fetchAuctionsFromChain(
   const cached = readAuctionsCache();
   return cached;
 }
+
+/* ------------------------------------------------------------------ */
+/* -------- Reveal / Finalize / Winner / Reveal History / Phase ------*/
+/* ------------------------------------------------------------------ */
+
+/** FE encode đang scale ETH * 1e6 và nhét vào 4 byte big-endian.
+ *  Ở reveal ta truyền đúng số đã scale (uint32 fit trong uint64 của contract). */
+export function toScaledUint(amountEth: string): number {
+  const scaled = Math.floor(Number(amountEth) * 1e6);
+  if (!Number.isFinite(scaled)) throw new Error("Invalid amount");
+  if (scaled < 0 || scaled > 0xffffffff) {
+    throw new Error("Amount too large (scaled overflow)");
+  }
+  return scaled;
+}
+
+/** Gửi reveal sau khi hết thời gian đấu giá. */
+export async function revealOnAuction(addr: string, amountEth: string) {
+  const c = await getAuctionWithSigner(addr);
+  const scaled = toScaledUint(amountEth); // uint32; contract nhận uint64
+  const tx = await c.revealBid(scaled);
+  return tx.wait();
+}
+
+/** Chốt phiên, phát WinnerFinalized. (Ai cũng có thể gọi) */
+export async function finalizeAuction(addr: string) {
+  const c = await getAuctionWithSigner(addr);
+  const tx = await c.finalize();
+  return tx.wait();
+}
+
+/** Đọc leader hiện tại (để hiển thị người đang dẫn đầu). */
+export async function readLeader(
+  addr: string
+): Promise<{ leader: string; amount: number }> {
+  const c = getAuctionRead(addr);
+  const [who, amt] = await c.getLeader();
+  return { leader: String(who), amount: Number(amt) / 1e6 };
+}
+
+/** Lịch sử reveal (để xem ai đã công bố & số tiền). */
+export type RevealRow = { user: string; amountEth: string; timeMs: number };
+
+export async function fetchRevealHistory(
+  addr: string,
+  fromBlock?: number,
+  toBlock?: number
+): Promise<RevealRow[]> {
+  // Ưu tiên provider từ ví nếu đúng chain, fallback RPC_URL
+  const provider = await (async () => {
+    try {
+      const eth = (window as any)?.ethereum;
+      if (eth) {
+        const bp = new BrowserProvider(eth);
+        const net = await bp.getNetwork();
+        if (Number(net.chainId) === CHAIN_ID) return bp;
+      }
+    } catch {}
+    return new JsonRpcProvider(RPC_URL);
+  })();
+
+  const iface = new Interface(AUCTION_ABI);
+  const ev = iface.getEvent("BidRevealed(address,uint64,uint256)");
+  const topic = ev!.topicHash;
+
+  const logs = await provider.getLogs({
+    address: addr,
+    topics: [topic],
+    fromBlock: (fromBlock ?? 0) as any,
+    toBlock: (toBlock ?? "latest") as any,
+  });
+
+  const rows: RevealRow[] = [];
+  for (const l of logs) {
+    try {
+      const parsed = iface.parseLog(l as any);
+      if (!parsed) continue;
+      const bidder: string = parsed.args[0];
+      const amountScaled: bigint = parsed.args[1];
+      const ts: bigint = parsed.args[2];
+      rows.push({
+        user: bidder,
+        amountEth: (Number(amountScaled) / 1e6).toFixed(6),
+        timeMs: Number(ts) * 1000,
+      });
+    } catch {
+      // bỏ qua log parse lỗi
+    }
+  }
+  rows.sort((a, b) => b.timeMs - a.timeMs);
+  return rows;
+}
+
+/** Phase: 0=Bidding, 1=Reveal, 2=Closed → về dạng chữ cho UI. */
+export type AuctionPhase = "Bidding" | "Reveal" | "Closed";
+export async function readPhase(addr: string): Promise<AuctionPhase> {
+  const c = getAuctionRead(addr);
+  const p: number = await c.getPhase();
+  return p === 0 ? "Bidding" : p === 1 ? "Reveal" : "Closed";
+}
