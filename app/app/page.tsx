@@ -18,11 +18,24 @@ export default function HomePage() {
   const pageSize = 12;
   const [page, setPage] = useState(1);
 
-  const totalPages = Math.max(1, Math.ceil(auctions.length / pageSize));
+  // 👉 Sắp xếp: open (ending soon → later) rồi mới closed (newly closed → older)
+  const ordered = useMemo<OnchainAuction[]>(() => {
+    const now = Date.now();
+    const open: OnchainAuction[] = [];
+    const closed: OnchainAuction[] = [];
+    for (const a of auctions) {
+      (a.endTimeMs > now ? open : closed).push(a);
+    }
+    open.sort((a, b) => a.endTimeMs - b.endTimeMs);   // gần hết hạn lên đầu
+    closed.sort((a, b) => b.endTimeMs - a.endTimeMs); // mới kết thúc đứng trước
+    return [...open, ...closed];
+  }, [auctions]);
+
+  const totalPages = Math.max(1, Math.ceil(ordered.length / pageSize));
   const visible = useMemo(() => {
     const start = (page - 1) * pageSize;
-    return auctions.slice(start, start + pageSize);
-  }, [auctions, page]);
+    return ordered.slice(start, start + pageSize);
+  }, [ordered, page]);
 
   async function load(force = false) {
     // 1) Hiển thị tức thì bằng cache (nếu có)
