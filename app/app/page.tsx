@@ -55,9 +55,20 @@ export default function HomePage() {
     <main className="min-h-screen bg-[radial-gradient(60%_60%_at_50%_0%,rgba(120,119,198,0.15)_0,transparent_60%),linear-gradient(to_bottom,rgba(10,10,10,1),rgba(0,0,0,1))] text-white">
       {/* Header */}
       <div className="mx-auto max-w-7xl px-6 py-6 flex items-center justify-between">
-        <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2">
-          <span className="text-yellow-400">⚡</span> FHE Private Auction
-        </h1>
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2">
+            <span className="text-yellow-400">⚡</span>
+            <span>Private NFT Auctions</span>
+          </h1>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-white/70">
+            <span className="rounded-full border border-white/15 px-2 py-0.5 bg-white/5">
+              Encrypted bids (FHE)
+            </span>
+            <span className="rounded-full border border-white/15 px-2 py-0.5 bg-white/5">
+              On-chain metadata
+            </span>
+          </div>
+        </div>
         <WalletButton />
       </div>
 
@@ -81,7 +92,7 @@ export default function HomePage() {
                 Page {page} / {totalPages}
               </span>
               <button
-                className="px-3 py-1 rounded border border-white/15 hover:bg:white/5 hover:bg-white/5 disabled:opacity-40"
+                className="px-3 py-1 rounded border border-white/15 hover:bg-white/5 disabled:opacity-40"
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page >= totalPages}
               >
