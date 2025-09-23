@@ -1,26 +1,35 @@
 "use client";
 
 import { BrowserProvider, Contract, JsonRpcProvider } from "ethers";
-import registryArtifact from "@/abis/MetadataRegistry.json";
 
-/** ENV */
-const REGISTRY_ADDR = process.env.NEXT_PUBLIC_METADATA_ADDRESS || ""; // <- bắt buộc để đồng bộ đa máy
+/**
+ * MetadataRegistry (đơn giản):
+ * interface IMetadataRegistry {
+ *   function setMetadata(address auction, string title, string imageUrl, string description) external;
+ *   function getMetadata(address auction) external view returns (string title, string imageUrl, string description);
+ * }
+ */
+
+const METADATA_ADDRESS = process.env.NEXT_PUBLIC_METADATA_ADDRESS || "";
 const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL!;
+const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111);
 
-/** ABI */
-const REGISTRY_ABI: any = (registryArtifact as any).abi ?? registryArtifact;
+// ABI tối giản cho MetadataRegistry
+const METADATA_ABI = [
+  "function setMetadata(address auction, string title, string imageUrl, string description) external",
+  "function getMetadata(address auction) external view returns (string title, string imageUrl, string description)",
+];
 
-/** Types */
+// ---------------- Local cache (nhanh) ----------------
 export type AuctionMeta = {
   title?: string;
   imageUrl?: string;
   description?: string;
 };
 
-const LS_KEY = "fhe.metadata.cache.v1";
+const LS_KEY = "fhe.meta.v1";
 
-/** Local cache helpers */
-function readAll(): Record<string, AuctionMeta> {
+function readAllLocal(): Record<string, AuctionMeta> {
   if (typeof window === "undefined") return {};
   try {
     const raw = localStorage.getItem(LS_KEY);
@@ -29,80 +38,107 @@ function readAll(): Record<string, AuctionMeta> {
     return {};
   }
 }
-function writeAll(map: Record<string, AuctionMeta>) {
+
+function writeAllLocal(map: Record<string, AuctionMeta>) {
   if (typeof window === "undefined") return;
   localStorage.setItem(LS_KEY, JSON.stringify(map));
 }
-function norm(addr: string) {
-  return (addr || "").toLowerCase();
-}
 
-/** Fallback ảnh DETERMINISTIC theo địa chỉ contract (mọi máy như nhau) */
-export function getAuctionImage(addr: string): string {
-  const seed = norm(addr).replace(/^0x/, "");
-  // dùng picsum seed cố định theo địa chỉ: mọi máy cùng 1 URL
-  return `https://picsum.photos/seed/fhe-${seed}/800/800`;
-}
-
-/** Local get/set (cho UI hiển thị tức thì) */
 export function getAuctionMeta(addr: string): AuctionMeta | undefined {
-  const all = readAll();
-  return all[norm(addr)];
-}
-function setAuctionMetaLocal(addr: string, meta: AuctionMeta) {
-  const all = readAll();
-  all[norm(addr)] = { ...(all[norm(addr)] || {}), ...meta };
-  writeAll(all);
+  const store = readAllLocal();
+  return store[addr.toLowerCase()];
 }
 
-/** Provider đọc */
-function readProvider() {
-  return new JsonRpcProvider(RPC_URL);
+/** Fallback ảnh deterministic theo địa chỉ để mọi máy giống nhau */
+export function getAuctionImage(addr: string): string {
+  const seed = addr?.toLowerCase() || "placeholder";
+  return `https://picsum.photos/seed/${encodeURIComponent(seed)}/800/800`;
 }
 
-/** Ghi meta on-chain (nếu có REGISTRY_ADDR) + cache local
- *  FE đã gọi hàm này sau khi create xong (trong createAuctionOnChain).
+/**
+ * Lưu metadata local ngay lập tức (cho creator thấy tức thời),
+ * đồng thời thử ghi on-chain nếu có MetadataRegistry.
  */
 export async function saveAuctionMeta(
   addr: string,
   meta: AuctionMeta
 ): Promise<void> {
-  // luôn set local để UI hiện ngay
-  setAuctionMetaLocal(addr, meta);
+  // 1) cập nhật local
+  const key = addr.toLowerCase();
+  const store = readAllLocal();
+  store[key] = {
+    title: meta.title || store[key]?.title,
+    imageUrl: meta.imageUrl || store[key]?.imageUrl,
+    description: meta.description || store[key]?.description,
+  };
+  writeAllLocal(store);
 
-  // nếu chưa cấu hình registry → dừng ở local (vẫn ổn định nhờ fallback deterministic)
-  if (!REGISTRY_ADDR) return;
+  // 2) ghi on-chain nếu có config MetadataRegistry
+  if (!METADATA_ADDRESS) return; // không có registry -> bỏ qua phần on-chain
 
-  // viết on-chain
-  if (!(window as any)?.ethereum) return;
-  const provider = new BrowserProvider((window as any).ethereum);
-  const signer = await provider.getSigner();
-  const reg = new Contract(REGISTRY_ADDR, REGISTRY_ABI, signer);
-
-  const title = meta.title ?? "";
-  const imageUrl = meta.imageUrl ?? "";
-  const description = meta.description ?? "";
-
-  const tx = await reg.setMetadata(addr, title, imageUrl, description);
-  await tx.wait();
+  try {
+    const eth = (window as any)?.ethereum;
+    if (!eth) return; // không có ví -> bỏ qua ghi on-chain (local vẫn còn)
+    const provider = new BrowserProvider(eth);
+    const net = await provider.getNetwork();
+    if (Number(net.chainId) !== CHAIN_ID) {
+      // sai chain thì thôi, vẫn giữ local; tránh chặn UI
+      return;
+    }
+    const signer = await provider.getSigner();
+    const reg = new Contract(METADATA_ADDRESS, METADATA_ABI, signer);
+    const tx = await reg.setMetadata(
+      addr,
+      meta.title || "",
+      meta.imageUrl || "",
+      meta.description || ""
+    );
+    await tx.wait();
+  } catch {
+    // im lặng: local vẫn hoạt động; lần sau các máy khác sẽ fallback deterministic
+  }
 }
 
-/** Đọc meta on-chain (nếu có), đồng thời cache local.
- *  Dùng trong fetchAuctionsFromChain để đồng bộ đa máy.
- */
-export async function readMetaOnchain(addr: string): Promise<AuctionMeta | null> {
-  if (!REGISTRY_ADDR) return null;
+/** Đọc metadata on-chain (ưu tiên hiển thị đồng bộ đa máy) */
+export async function readMetaOnchain(
+  addr: string
+): Promise<AuctionMeta | null> {
+  if (!METADATA_ADDRESS) return null;
   try {
-    const reg = new Contract(REGISTRY_ADDR, REGISTRY_ABI, readProvider());
-    const [title, imageUrl, description] = await reg.getMetadata(addr);
-    const meta: AuctionMeta = {
-      title: title || undefined,
-      imageUrl: imageUrl || undefined,
-      description: description || undefined,
+    // ưu tiên ví nếu đang đúng chain (để giảm rate-limit); nếu không dùng RPC public
+    const eth = (typeof window !== "undefined" ? (window as any).ethereum : null);
+    let provider: any;
+    if (eth) {
+      try {
+        const bp = new BrowserProvider(eth);
+        const net = await bp.getNetwork();
+        provider = Number(net.chainId) === CHAIN_ID ? bp : new JsonRpcProvider(RPC_URL);
+      } catch {
+        provider = new JsonRpcProvider(RPC_URL);
+      }
+    } else {
+      provider = new JsonRpcProvider(RPC_URL);
+    }
+
+    const reg = new Contract(METADATA_ADDRESS, METADATA_ABI, provider);
+    const res = await reg.getMetadata(addr);
+    // ethers v6 tuple: { 0: title, 1: image, 2: desc, title, imageUrl, description }
+    const title = String((res as any).title ?? res[0] ?? "");
+    const imageUrl = String((res as any).imageUrl ?? res[1] ?? "");
+    const description = String((res as any).description ?? res[2] ?? "");
+
+    // đồng bộ lại local cache để lần sau load nhanh
+    const key = addr.toLowerCase();
+    const store = readAllLocal();
+    store[key] = {
+      title: title || store[key]?.title,
+      imageUrl: imageUrl || store[key]?.imageUrl,
+      description: description || store[key]?.description,
     };
-    // cache local để lần sau load nhanh
-    setAuctionMetaLocal(addr, meta);
-    return meta;
+    writeAllLocal(store);
+
+    if (!title && !imageUrl && !description) return null;
+    return { title, imageUrl, description };
   } catch {
     return null;
   }
