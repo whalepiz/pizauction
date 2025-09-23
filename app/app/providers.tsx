@@ -1,4 +1,3 @@
-// app/app/providers.tsx
 "use client";
 
 import { Toaster } from "sonner";
@@ -11,17 +10,17 @@ const projectId = process.env.NEXT_PUBLIC_PROJECT_ID!;
 const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL!;
 const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111);
 
-// Ethers config cho Web3Modal
+// ---- cấu hình cho Ethers
 const ethersConfig = defaultConfig({
   metadata: {
-    name: "FHE Private Auction",
-    description: "Private bidding dApp (FHEVM demo)",
+    name: "Private NFT Auctions",
+    description: "Encrypted bids (FHE) + on-chain metadata",
     url: "https://pizauction.vercel.app",
-    icons: ["https://avatars.githubusercontent.com/u/12365?v=4"] // bất kỳ icon hợp lệ
+    icons: ["https://pizauction.vercel.app/icon.png"]
   }
 });
 
-// Chain cấu hình thủ công (Sepolia)
+// ---- chain Sepolia
 const chains = [
   {
     chainId: CHAIN_ID,
@@ -32,7 +31,7 @@ const chains = [
   }
 ];
 
-// Tránh gọi createWeb3Modal nhiều lần
+// ---- chỉ khởi tạo 1 lần, tránh lỗi Fast Refresh
 declare global {
   interface Window {
     __W3M_INIT__?: boolean;
@@ -44,6 +43,11 @@ if (typeof window !== "undefined" && !window.__W3M_INIT__) {
     ethersConfig,
     chains,
     projectId,
+    enableInjected: true,      // MetaMask + ví cài trên browser
+    enableEIP6963: true,       // phát hiện nhiều ví cùng lúc
+    enableWalletConnect: true, // quét QR = WalletConnect
+    enableCoinbase: true,      // Coinbase Wallet
+    themeMode: "dark",
     enableAnalytics: false
   });
   window.__W3M_INIT__ = true;
