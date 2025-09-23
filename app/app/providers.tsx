@@ -1,57 +1,59 @@
+// app/app/providers.tsx
 "use client";
 
-import { ReactNode, useEffect } from "react";
 import { Toaster } from "sonner";
 import {
   createWeb3Modal,
-  defaultConfig,
-  useWeb3ModalState,
+  defaultConfig
 } from "@web3modal/ethers/react";
 
-// ====== WalletConnect config ======
-const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID!;
-const chainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111);
+const projectId = process.env.NEXT_PUBLIC_PROJECT_ID!;
+const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL!;
+const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111);
 
-// Sepolia (EVM)
-const sepolia = {
-  chainId,
-  name: "Sepolia",
-  currency: "ETH",
-  explorerUrl: "https://sepolia.etherscan.io",
-  rpcUrl: process.env.NEXT_PUBLIC_RPC_URL || "https://rpc.sepolia.org",
-};
+// Ethers config cho Web3Modal
+const ethersConfig = defaultConfig({
+  metadata: {
+    name: "FHE Private Auction",
+    description: "Private bidding dApp (FHEVM demo)",
+    url: "https://pizauction.vercel.app",
+    icons: ["https://avatars.githubusercontent.com/u/12365?v=4"] // bất kỳ icon hợp lệ
+  }
+});
 
-const metadata = {
-  name: "FHE Private Auction",
-  description: "Private-bid NFT auction dApp using Zama FHE",
-  url: "https://pizauction.vercel.app",
-  icons: ["https://pizauction.vercel.app/icon.png"],
-};
+// Chain cấu hình thủ công (Sepolia)
+const chains = [
+  {
+    chainId: CHAIN_ID,
+    name: "Sepolia",
+    currency: "ETH",
+    explorerUrl: "https://sepolia.etherscan.io",
+    rpcUrl: RPC_URL
+  }
+];
 
-export function Providers({ children }: { children: ReactNode }) {
-  // Tạo Web3Modal một lần khi client mount
-  useEffect(() => {
-    if (!projectId) return;
+// Tránh gọi createWeb3Modal nhiều lần
+declare global {
+  interface Window {
+    __W3M_INIT__?: boolean;
+  }
+}
 
-    createWeb3Modal({
-      ethersConfig: defaultConfig({ metadata }),
-      chains: [sepolia],
-      projectId,
-      themeMode: "dark",
-      themeVariables: {
-        "--w3m-accent": "#7c3aed", // violet-600
-        "--w3m-border-radius-master": "14px",
-      },
-    });
-  }, []);
+if (typeof window !== "undefined" && !window.__W3M_INIT__) {
+  createWeb3Modal({
+    ethersConfig,
+    chains,
+    projectId,
+    enableAnalytics: false
+  });
+  window.__W3M_INIT__ = true;
+}
 
-  // optional: lắng nghe state nếu cần
-  useWeb3ModalState();
-
+export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <>
       {children}
-      <Toaster position="top-right" />
+      <Toaster richColors closeButton />
     </>
   );
 }
