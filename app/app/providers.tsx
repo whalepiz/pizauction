@@ -39,17 +39,20 @@ declare global {
 }
 
 if (typeof window !== "undefined" && !window.__W3M_INIT__) {
-  createWeb3Modal({
-    ethersConfig,
-    chains,
-    projectId,
-    enableInjected: true,      // MetaMask + ví cài trên browser
-    enableEIP6963: true,       // phát hiện nhiều ví cùng lúc
-    enableWalletConnect: true, // quét QR = WalletConnect
-    enableCoinbase: true,      // Coinbase Wallet
-    themeMode: "dark",
-    enableAnalytics: false
-  });
+// ... các import & cấu hình phía trên giữ nguyên
+
+createWeb3Modal({
+  ethersConfig,
+  chains,
+  projectId,
+  // các cờ mở nhiều ví
+  enableInjected: true,
+  enableEIP6963: true,
+  enableWalletConnect: true,
+  enableCoinbase: true,
+  themeMode: "dark",
+} as any); // <-- thêm as any để TS không bắt lỗi type
+
   window.__W3M_INIT__ = true;
 }
 
